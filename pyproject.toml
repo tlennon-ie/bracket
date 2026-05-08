@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bracket-ml"
+version = "0.1.0"
+description = "Hyperparameter search and VLM-judged ranking for diffusion-model fine-tunes. Drives sd-scripts and musubi-tuner; emits a markdown report with statistical confidence."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Thomas Lennon" }]
+keywords = [
+    "diffusion",
+    "fine-tuning",
+    "hyperparameter-search",
+    "automl",
+    "sdxl",
+    "z-image",
+    "flux",
+    "lora",
+    "optuna",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "tensorboard>=2.15",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12",
+    "protobuf>=4.21",
+    "toml>=0.10",
+    "optuna>=3.5",
+    "gradio>=4.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/tlennon-ie/bracket"
+Repository = "https://github.com/tlennon-ie/bracket"
+Issues = "https://github.com/tlennon-ie/bracket/issues"
+
+[project.scripts]
+bracket = "bracket.orchestrator_cli:main"
+bracket-serve = "bracket.cli:serve"
+bracket-ui = "bracket.ui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["bracket*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

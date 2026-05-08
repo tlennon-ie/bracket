@@ -1,0 +1,334 @@
+"""Helpers for the Monitor tab — extracts meaningful data from a session
+output_dir for the UI to render.
+
+Three things the user actually wants to see, instead of raw log dumps:
+
+  1. Progress card: current candidate N/total, current step X/Y, ETA
+  2. Live loss: raw + EMA-smoothed for the *currently running* candidate
+  3. Score history: one row per completed candidate, sortable by score
+
+This module reads from disk (ledger, tfevents, sample dirs) — no internal
+state. Safe to call frequently from a UI poll.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Optional
+
+from bracket.ema import EMASmoother
+from bracket.tfevents_reader import TFEventsTail
+
+
+@dataclass
+class CandidateRow:
+    """One row in the score-history table (display-friendly)."""
+    run_id: str
+    role: str
+    config_id: str
+    score: Optional[float]
+    final_smoothed: Optional[float]
+    slope: Optional[float]
+    n_steps: int
+    duration_s: float
+    disqualified: Optional[str]
+
+
+@dataclass
+class LossSeries:
+    steps: list[int]
+    raw: list[float]
+    smoothed: list[float]
+
+
+@dataclass
+class MonitorSnapshot:
+    status_line: str
+    progress_pct: float          # 0..100, based on completed runs / target
+    completed_runs: int
+    total_runs_target: int
+    current_run_id: Optional[str]
+    current_run_steps_done: Optional[int]
+    current_run_max_steps: Optional[int]
+    current_loss: Optional[LossSeries]
+    score_history: list[CandidateRow]
+    setup_status: str            # "not started" | "running" | "done"
+    judge_summary: str = ""      # plain-English judge status, e.g. "not configured"
+    session_done: bool = False   # True when no run is in-flight and target reached
+
+
+def read_ledger(ledger_path: Path) -> list[dict]:
+    if not ledger_path.exists():
+        return []
+    rows: list[dict] = []
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def latest_running_run(output_dir: Path, ledger_rows: list[dict]) -> Optional[Path]:
+    """Return the run directory whose loss curve we should plot.
+
+    Preference: an in-flight run (dir exists but not yet in ledger). Falls
+    back to the most-recently-modified completed run so the loss plot still
+    shows useful data when no candidate is currently training (e.g. between
+    finals stages, or after the whole session finished).
+    """
+    runs_dir = Path(output_dir) / "runs"
+    if not runs_dir.exists():
+        return None
+    all_run_dirs = [
+        p for p in runs_dir.iterdir()
+        if p.is_dir() and p.name != "setup"
+    ]
+    if not all_run_dirs:
+        return None
+    ledgered = {r.get("run_id") for r in ledger_rows}
+    in_flight = [p for p in all_run_dirs if p.name not in ledgered]
+    if in_flight:
+        return max(in_flight, key=lambda p: p.stat().st_mtime)
+    # Fall back to the latest completed run so the loss chart isn't blank
+    # the moment training finishes.
+    return max(all_run_dirs, key=lambda p: p.stat().st_mtime)
+
+
+def find_tfevents_in(run_dir: Path) -> Optional[Path]:
+    matches = list(run_dir.rglob("events.out.tfevents.*"))
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_size if p.exists() else 0)
+
+
+def load_loss_series(tfevents: Path, *, ema_alpha: float = 0.05) -> Optional[LossSeries]:
+    """Drain a tfevents file and return the raw/smoothed loss series."""
+    if not tfevents.exists():
+        return None
+    smoother = EMASmoother(alpha=ema_alpha)
+    steps: list[int] = []
+    raw: list[float] = []
+    smoothed: list[float] = []
+
+    def _on_frame(frame) -> None:
+        steps.append(frame.step)
+        raw.append(frame.raw_loss)
+        smoothed.append(frame.smoothed_loss)
+
+    tail = TFEventsTail(event_path=str(tfevents), on_frame=_on_frame, ema_alpha=ema_alpha)
+    n = tail.drain_once()
+    if n == 0:
+        return None
+    return LossSeries(steps=steps, raw=raw, smoothed=smoothed)
+
+
+def parse_max_steps_from_log(run_dir: Path) -> Optional[int]:
+    """Read the run's stdout.log for `--max_train_steps N`."""
+    log = run_dir / "logs" / "stdout.log"
+    if not log.exists():
+        return None
+    try:
+        head = log.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return None
+    # Look for "--max_train_steps N" or "'--max_train_steps', 'N'"
+    import re
+    m = re.search(r"--max_train_steps['\"\s,]+(\d+)", head)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+_TRAINING_ROLES = ("baseline", "candidate", "curated", "finalist")
+
+
+def score_history_rows(ledger_rows: list[dict]) -> list[CandidateRow]:
+    out: list[CandidateRow] = []
+    for r in ledger_rows:
+        if r.get("role") not in _TRAINING_ROLES:
+            continue
+        comps = r.get("score_components") or {}
+        score = r.get("score")
+        if isinstance(score, str):  # serialized inf/nan
+            score = None
+        out.append(CandidateRow(
+            run_id=r.get("run_id", ""),
+            role=r.get("role", ""),
+            config_id=r.get("config_id", ""),
+            score=score,
+            final_smoothed=comps.get("final_smoothed"),
+            slope=comps.get("slope"),
+            n_steps=int(r.get("n_steps", 0) or 0),
+            duration_s=float(r.get("duration_s", 0.0) or 0.0),
+            disqualified=r.get("disqualified"),
+        ))
+    return out
+
+
+def setup_status(ledger_rows: list[dict]) -> str:
+    setup_rows = [r for r in ledger_rows if r.get("role") == "setup"]
+    if not setup_rows:
+        return "not started"
+    if all(r.get("exit_code") == 0 for r in setup_rows):
+        return "done"
+    if any(r.get("exit_code") in (None, 0) for r in setup_rows):
+        return "running"
+    return "errored"
+
+
+def build_snapshot(
+    output_dir: Path,
+    *,
+    total_runs_target: int = 0,
+    ema_alpha: float = 0.05,
+) -> MonitorSnapshot:
+    output_dir = Path(output_dir)
+    ledger_path = output_dir / "ledger.jsonl"
+    rows = read_ledger(ledger_path)
+    history = score_history_rows(rows)
+    completed = sum(1 for r in rows if r.get("role") in _TRAINING_ROLES)
+    progress = (completed / total_runs_target * 100.0) if total_runs_target else 0.0
+    progress = min(100.0, progress)
+
+    current_run = latest_running_run(output_dir, rows)
+    cur_steps_done: Optional[int] = None
+    cur_max_steps: Optional[int] = None
+    cur_loss: Optional[LossSeries] = None
+    cur_run_id: Optional[str] = None
+    if current_run is not None:
+        cur_run_id = current_run.name
+        cur_max_steps = parse_max_steps_from_log(current_run)
+        tfe = find_tfevents_in(current_run)
+        if tfe is not None:
+            cur_loss = load_loss_series(tfe, ema_alpha=ema_alpha)
+            if cur_loss is not None and cur_loss.steps:
+                cur_steps_done = cur_loss.steps[-1]
+
+    setup = setup_status(rows)
+    if setup == "running":
+        status_line = "**Setup**: pre-caching latents + text-encoder outputs (one-time)."
+    elif current_run is not None:
+        status_line = (f"**Running** {cur_run_id}"
+                       + (f" · step {cur_steps_done}/{cur_max_steps}" if cur_steps_done and cur_max_steps else "")
+                       + f" · {completed}/{total_runs_target} runs done"
+                       if total_runs_target else "")
+    elif completed > 0 and (not total_runs_target or completed >= total_runs_target):
+        status_line = f"**Done.** {completed} runs recorded."
+    elif setup == "errored":
+        status_line = "**Setup errored** — check the latest setup-*.log under runs/setup/."
+    else:
+        status_line = "_idle / no session yet_"
+
+    # Judge state — surface explicitly so users can tell whether VLM scoring
+    # actually ran. Looks at completed training rows: if any has a populated
+    # judge_report, the judge ran; otherwise it's clearly off.
+    training_rows = [r for r in rows if r.get("role") in _TRAINING_ROLES]
+    rows_with_judge = [r for r in training_rows if r.get("judge_report")]
+    if not training_rows:
+        judge_summary = ""
+    elif not rows_with_judge:
+        judge_summary = (
+            "**Judge:** ❌ not configured — runs scored on training loss only. "
+            "Enable LMStudio + sample_prompts on the Setup tab to score sample images."
+        )
+    else:
+        n_imgs = sum(int(r["judge_report"].get("n_images", 0)) for r in rows_with_judge)
+        n_failed = sum(int(r["judge_report"].get("n_failed", 0)) for r in rows_with_judge)
+        means = [float(r["judge_report"].get("mean_overall", 0.0)) for r in rows_with_judge]
+        avg = sum(means) / len(means) if means else 0.0
+        judge_summary = (
+            f"**Judge:** ✓ LMStudio · {len(rows_with_judge)}/{len(training_rows)} runs scored · "
+            f"{n_imgs} images judged ({n_failed} failed) · mean visual score **{avg:.2f}/10**"
+        )
+
+    # session_done: training target reached AND no run currently in-flight.
+    session_done = (
+        total_runs_target > 0 and completed >= total_runs_target
+        and current_run is None
+    )
+
+    return MonitorSnapshot(
+        status_line=status_line,
+        progress_pct=progress,
+        completed_runs=completed,
+        total_runs_target=total_runs_target,
+        current_run_id=cur_run_id,
+        current_run_steps_done=cur_steps_done,
+        current_run_max_steps=cur_max_steps,
+        current_loss=cur_loss,
+        score_history=history,
+        setup_status=setup,
+        judge_summary=judge_summary,
+        session_done=session_done,
+    )
+
+
+def gallery_items(output_dir: Path, max_items: int = 200) -> list[tuple[str, str]]:
+    """Return (image_path, caption) pairs from every run's samples/ dir.
+
+    Flat list — kept for tests and the Results tab. The Monitor tab uses
+    `gallery_groups()` instead so it can render one collapsible accordion
+    per run.
+    """
+    output_dir = Path(output_dir)
+    runs_dir = output_dir / "runs"
+    if not runs_dir.exists():
+        return []
+    out: list[tuple[str, str]] = []
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        sample_dir = run_dir / "output" / "sample"
+        if not sample_dir.exists():
+            continue
+        for img in sorted(sample_dir.glob("*.png")):
+            out.append((str(img), f"{run_dir.name} / {img.name}"))
+            if len(out) >= max_items:
+                return out
+    return out
+
+
+@dataclass
+class GalleryGroup:
+    run_id: str
+    items: list[tuple[str, str]]   # (image_path, caption) pairs
+    mtime: float                   # newest image mtime in this group
+
+
+def gallery_groups(
+    output_dir: Path, *, max_items_per_run: int = 200,
+) -> list[GalleryGroup]:
+    """Return one group per run that has samples, ordered newest-first.
+
+    Within a group, images are sorted newest-first so the most recent
+    sampling pass is what you see when an accordion opens.
+    """
+    output_dir = Path(output_dir)
+    runs_dir = output_dir / "runs"
+    if not runs_dir.exists():
+        return []
+    groups: list[GalleryGroup] = []
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir() or run_dir.name == "setup":
+            continue
+        sample_dir = run_dir / "output" / "sample"
+        if not sample_dir.exists():
+            continue
+        imgs = list(sample_dir.glob("*.png"))
+        if not imgs:
+            continue
+        imgs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        imgs = imgs[:max_items_per_run]
+        items = [(str(p), p.name) for p in imgs]
+        newest = max((p.stat().st_mtime for p in imgs), default=0.0)
+        groups.append(GalleryGroup(run_id=run_dir.name, items=items, mtime=newest))
+    groups.sort(key=lambda g: g.mtime, reverse=True)
+    return groups
