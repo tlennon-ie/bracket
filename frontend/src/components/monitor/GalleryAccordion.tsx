@@ -1,4 +1,6 @@
-// Per-run accordion. Lazy-loaded thumbs, lightbox on click.
+// Per-run accordion. Lazy-loaded thumbs, lightbox on click. Renders <video>
+// for samples whose URL ends in a video extension (Wan / Hunyuan / LTX /
+// FramePack write .mp4) and <img> for everything else.
 
 import {
 	Accordion,
@@ -16,6 +18,9 @@ import { useMemo, useState } from "react";
 interface Props {
 	groups: GalleryGroup[];
 }
+
+const VIDEO_RE = /\.(mp4|webm|mov|mkv)(\?|$)/i;
+const isVideoUrl = (url: string) => VIDEO_RE.test(url);
 
 export function GalleryAccordion({ groups }: Props) {
 	const [lightbox, setLightbox] = useState<GalleryItem | null>(null);
@@ -56,25 +61,40 @@ export function GalleryAccordion({ groups }: Props) {
 						</AccordionTrigger>
 						<AccordionContent>
 							<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-								{g.items.slice(0, 24).map((item) => (
-									<button
-										key={item.url}
-										type="button"
-										onClick={() => setLightbox(item)}
-										className="group relative aspect-square overflow-hidden rounded-md border border-border bg-muted hover:border-primary transition-colors"
-										aria-label={`Open ${item.caption}`}
-									>
-										<img
-											loading="lazy"
-											src={item.url}
-											alt={item.caption}
-											className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-										/>
-										<span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-[10px] text-white truncate font-mono-tight opacity-0 group-hover:opacity-100 transition-opacity">
-											{item.caption}
-										</span>
-									</button>
-								))}
+								{g.items.slice(0, 24).map((item) => {
+									const video = isVideoUrl(item.url);
+									return (
+										<button
+											key={item.url}
+											type="button"
+											onClick={() => setLightbox(item)}
+											className="group relative aspect-square overflow-hidden rounded-md border border-border bg-muted hover:border-primary transition-colors"
+											aria-label={`Open ${item.caption}`}
+										>
+											{video ? (
+												<video
+													muted
+													loop
+													autoPlay
+													playsInline
+													preload="metadata"
+													src={item.url}
+													className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+												/>
+											) : (
+												<img
+													loading="lazy"
+													src={item.url}
+													alt={item.caption}
+													className="absolute inset-0 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+												/>
+											)}
+											<span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-[10px] text-white truncate font-mono-tight opacity-0 group-hover:opacity-100 transition-opacity">
+												{item.caption}
+											</span>
+										</button>
+									);
+								})}
 								{g.items.length > 24 && (
 									<div className="col-span-full text-xs text-muted-foreground text-center py-2">
 										{g.items.length - 24} more samples in this run
@@ -98,11 +118,21 @@ export function GalleryAccordion({ groups }: Props) {
 								<span>·</span>
 								<span>{lightbox.caption}</span>
 							</div>
-							<img
-								src={lightbox.url}
-								alt={lightbox.caption}
-								className="w-full h-auto rounded-md"
-							/>
+							{isVideoUrl(lightbox.url) ? (
+								<video
+									src={lightbox.url}
+									controls
+									autoPlay
+									loop
+									className="w-full h-auto rounded-md"
+								/>
+							) : (
+								<img
+									src={lightbox.url}
+									alt={lightbox.caption}
+									className="w-full h-auto rounded-md"
+								/>
+							)}
 						</div>
 					)}
 				</DialogContent>

@@ -110,6 +110,7 @@ def get_session() -> OrchestrationSession:
 
 _VALID_FILE_SUFFIXES = frozenset({
     ".png", ".jpg", ".jpeg", ".webp",
+    ".mp4", ".webm", ".mov", ".mkv",
     ".txt", ".log", ".md", ".json",
 })
 

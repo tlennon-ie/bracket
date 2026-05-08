@@ -76,6 +76,31 @@ _DEFAULT_VAE_PATH = _env_or_default("BRACKET_VAE_PATH", "")
 _DEFAULT_QWEN3_TE_PATH = _env_or_default("BRACKET_QWEN3_TE_PATH", "")
 _DEFAULT_FLUX2_DIT_PATH = _env_or_default("BRACKET_FLUX2_DIT_PATH", "")
 _DEFAULT_MISTRAL3_TE_PATH = _env_or_default("BRACKET_MISTRAL3_TE_PATH", "")
+# Flux.1 (dev/schnell + Kontext) — dual TE: T5-XXL + CLIP-L
+_DEFAULT_FLUX1_DIT_PATH = _env_or_default("BRACKET_FLUX1_DIT_PATH", "")
+_DEFAULT_FLUX1_AE_PATH = _env_or_default("BRACKET_FLUX1_AE_PATH", "")
+_DEFAULT_FLUX1_KONTEXT_DIT_PATH = _env_or_default("BRACKET_FLUX1_KONTEXT_DIT_PATH", "")
+_DEFAULT_T5XXL_PATH = _env_or_default("BRACKET_T5XXL_PATH", "")
+_DEFAULT_CLIP_L_PATH = _env_or_default("BRACKET_CLIP_L_PATH", "")
+# Qwen-Image (text encoder is Qwen2.5-VL-7B; distinct from the Qwen3 used by Z-Image)
+_DEFAULT_QWEN_IMAGE_DIT_PATH = _env_or_default("BRACKET_QWEN_IMAGE_DIT_PATH", "")
+_DEFAULT_QWEN_IMAGE_VAE_PATH = _env_or_default("BRACKET_QWEN_IMAGE_VAE_PATH", "")
+_DEFAULT_QWEN_IMAGE_TE_PATH = _env_or_default("BRACKET_QWEN_IMAGE_TE_PATH", "")
+_DEFAULT_QWEN_IMAGE_EDIT_DIT_PATH = _env_or_default("BRACKET_QWEN_IMAGE_EDIT_DIT_PATH", "")
+# SD3.5 — bundle file usually contains MMDiT + T5 + CLIP
+_DEFAULT_SD35_PRETRAINED = _env_or_default("BRACKET_SD35_PRETRAINED", "")
+# HunyuanVideo + FramePack — share dual TE (LLaMA3 + CLIP-L)
+_DEFAULT_HUNYUAN_VIDEO_DIT_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_DIT_PATH", "")
+_DEFAULT_HUNYUAN_VIDEO_VAE_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_VAE_PATH", "")
+_DEFAULT_LLAMA3_PATH = _env_or_default("BRACKET_LLAMA3_PATH", "")
+_DEFAULT_FRAMEPACK_DIT_PATH = _env_or_default("BRACKET_FRAMEPACK_DIT_PATH", "")
+# Wan — single TE (UMT5-XXL)
+_DEFAULT_WAN_DIT_PATH = _env_or_default("BRACKET_WAN_DIT_PATH", "")
+_DEFAULT_WAN_VAE_PATH = _env_or_default("BRACKET_WAN_VAE_PATH", "")
+_DEFAULT_UMT5_PATH = _env_or_default("BRACKET_UMT5_PATH", "")
+# LTX-Video
+_DEFAULT_LTX_VIDEO_DIT_PATH = _env_or_default("BRACKET_LTX_VIDEO_DIT_PATH", "")
+_DEFAULT_LTX_VIDEO_VAE_PATH = _env_or_default("BRACKET_LTX_VIDEO_VAE_PATH", "")
 
 
 @dataclass(frozen=True)
@@ -165,6 +190,152 @@ def _build_flux2_klein_lora(**kw: Any) -> Trainer:
         dit_path=kw["dit_path"],
         vae_path=kw["vae_path"],
         text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_flux1_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.flux1_lora import Flux1LoRATrainer
+    return Flux1LoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        t5xxl_path=kw["t5xxl_path"], clip_l_path=kw["clip_l_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_flux1_full(**kw: Any) -> Trainer:
+    from bracket.trainer.flux1_full import Flux1FullTrainer
+    return Flux1FullTrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        t5xxl_path=kw["t5xxl_path"], clip_l_path=kw["clip_l_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_flux1_kontext_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.flux1_kontext_lora import Flux1KontextLoRATrainer
+    return Flux1KontextLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        t5xxl_path=kw["t5xxl_path"], clip_l_path=kw["clip_l_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_qwen_image_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.qwen_image_lora import QwenImageLoRATrainer
+    return QwenImageLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_qwen_image_full(**kw: Any) -> Trainer:
+    from bracket.trainer.qwen_image_full import QwenImageFullTrainer
+    return QwenImageFullTrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_qwen_image_edit_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.qwen_image_edit_lora import QwenImageEditLoRATrainer
+    return QwenImageEditLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_sd35_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.sd35_lora import SD35LoRATrainer
+    return SD35LoRATrainer(
+        sd_scripts_dir=kw["sd_scripts_dir"], venv_python=kw["venv_python"],
+        pretrained_model=kw["pretrained_model"],
+        model_class=kw.get("model_class", "sd35-medium"),
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_sd35_full(**kw: Any) -> Trainer:
+    from bracket.trainer.sd35_full import SD35FullTrainer
+    return SD35FullTrainer(
+        sd_scripts_dir=kw["sd_scripts_dir"], venv_python=kw["venv_python"],
+        pretrained_model=kw["pretrained_model"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_hunyuan_video_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.hunyuan_video_lora import HunyuanVideoLoRATrainer
+    return HunyuanVideoLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder1_path=kw["text_encoder1_path"],
+        text_encoder2_path=kw["text_encoder2_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_hunyuan_video_full(**kw: Any) -> Trainer:
+    from bracket.trainer.hunyuan_video_full import HunyuanVideoFullTrainer
+    return HunyuanVideoFullTrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder1_path=kw["text_encoder1_path"],
+        text_encoder2_path=kw["text_encoder2_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_wan_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.wan_lora import WanLoRATrainer
+    return WanLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        wan_version=kw.get("wan_version", "2.2"),
+        task=kw.get("task", "t2v-14B"),
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_wan_full(**kw: Any) -> Trainer:
+    from bracket.trainer.wan_full import WanFullTrainer
+    return WanFullTrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        wan_version=kw.get("wan_version", "2.2"),
+        task=kw.get("task", "t2v-14B"),
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_ltx_video_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.ltx_video_lora import LTXVideoLoRATrainer
+    return LTXVideoLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_framepack_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.framepack_lora import FramePackLoRATrainer
+    return FramePackLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder1_path=kw["text_encoder1_path"],
+        text_encoder2_path=kw["text_encoder2_path"],
         vram_gb=kw.get("vram_gb"),
     )
 
@@ -306,6 +477,465 @@ PRESETS: tuple[ModelPreset, ...] = (
             "Wraps `musubi-tuner/flux_2_train_network.py`. Flux-2-Klein 9B fp8 "
             "is much smaller than the 32B flagship — comfortably fits 5090 VRAM. "
             "Mistral-3-Small as the text encoder. Pre-cache runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── Flux.1 ───────────────────────────
+    ModelPreset(
+        id="flux1-lora",
+        model_family="Flux.1",
+        training_type="LoRA",
+        display_name="Flux.1 (dev/schnell) · LoRA",
+        trainer_factory=_build_flux1_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_FLUX1_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_FLUX1_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE / AE weights *",
+                default=_DEFAULT_FLUX1_AE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Flux.1 uses an AutoEncoder (passed as --ae). Set BRACKET_FLUX1_AE_PATH.",
+            ),
+            FieldSpec(
+                name="t5xxl_path", label="T5-XXL text encoder *",
+                default=_DEFAULT_T5XXL_PATH, required=True, kind="path",
+                help="Set BRACKET_T5XXL_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="clip_l_path", label="CLIP-L text encoder *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+                help="Set BRACKET_CLIP_L_PATH to change the default.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/flux_train_network.py`. Dual TE (T5-XXL + CLIP-L). Pre-cache runs automatically.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="flux1-full",
+        model_family="Flux.1",
+        training_type="Full FT",
+        display_name="Flux.1 (dev/schnell) · Full FT",
+        trainer_factory=_build_flux1_full,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_FLUX1_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_FLUX1_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE / AE weights *",
+                default=_DEFAULT_FLUX1_AE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="t5xxl_path", label="T5-XXL text encoder *",
+                default=_DEFAULT_T5XXL_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="clip_l_path", label="CLIP-L text encoder *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/flux_train.py`. Full FT with Adafactor + fused backward + blocks_to_swap.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="flux1-kontext-lora",
+        model_family="Flux.1-Kontext",
+        training_type="LoRA",
+        display_name="Flux.1-Kontext · LoRA",
+        trainer_factory=_build_flux1_kontext_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="Kontext DiT weights *",
+                default=_DEFAULT_FLUX1_KONTEXT_DIT_PATH or _DEFAULT_FLUX1_DIT_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_FLUX1_KONTEXT_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE / AE weights *",
+                default=_DEFAULT_FLUX1_AE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="t5xxl_path", label="T5-XXL text encoder *",
+                default=_DEFAULT_T5XXL_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="clip_l_path", label="CLIP-L text encoder *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/flux_kontext_train_network.py`. Trains an "
+            "image-edit LoRA. Dataset TOML must declare both source (control) and "
+            "target image directories."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── Qwen-Image ───────────────────────────
+    ModelPreset(
+        id="qwen-image-lora",
+        model_family="Qwen-Image",
+        training_type="LoRA",
+        display_name="Qwen-Image 20B · LoRA",
+        trainer_factory=_build_qwen_image_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_QWEN_IMAGE_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_QWEN_IMAGE_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_QWEN_IMAGE_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_QWEN_IMAGE_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen2.5-VL-7B) *",
+                default=_DEFAULT_QWEN_IMAGE_TE_PATH, required=True, kind="path",
+                help="Qwen-Image uses Qwen2.5-VL-7B as TE (NOT plain Qwen3). Set BRACKET_QWEN_IMAGE_TE_PATH.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/qwen_image_train_network.py`. Pre-cache runs automatically.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="qwen-image-full",
+        model_family="Qwen-Image",
+        training_type="Full FT",
+        display_name="Qwen-Image 20B · Full FT",
+        trainer_factory=_build_qwen_image_full,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_QWEN_IMAGE_DIT_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_QWEN_IMAGE_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen2.5-VL-7B) *",
+                default=_DEFAULT_QWEN_IMAGE_TE_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/qwen_image_train.py`. Adafactor + fused + blocks_to_swap.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="qwen-image-edit-lora",
+        model_family="Qwen-Image-Edit",
+        training_type="LoRA",
+        display_name="Qwen-Image-Edit · LoRA",
+        trainer_factory=_build_qwen_image_edit_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="Edit DiT weights *",
+                default=_DEFAULT_QWEN_IMAGE_EDIT_DIT_PATH or _DEFAULT_QWEN_IMAGE_DIT_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_QWEN_IMAGE_EDIT_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_QWEN_IMAGE_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen2.5-VL-7B) *",
+                default=_DEFAULT_QWEN_IMAGE_TE_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/qwen_image_edit_train_network.py`. Dataset TOML "
+            "must declare paired source + target image directories."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── SD3.5 ───────────────────────────
+    ModelPreset(
+        id="sd35-lora",
+        model_family="SD3.5",
+        training_type="LoRA",
+        display_name="SD3.5 (Medium / Large) · LoRA",
+        trainer_factory=_build_sd35_lora,
+        fields=(
+            FieldSpec(
+                name="pretrained_model", label="SD3.5 base path *",
+                default=_DEFAULT_SD35_PRETRAINED, required=True, kind="path",
+                help="HF folder OR single .safetensors bundling MMDiT + T5 + CLIPs. Set BRACKET_SD35_PRETRAINED.",
+            ),
+            _SD_SCRIPTS_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `sd-scripts/sd3_train_network.py` (sd3 branch). Caches latents + TE outputs "
+            "on the fly inside the trainer."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="sd35-full",
+        model_family="SD3.5",
+        training_type="Full FT",
+        display_name="SD3.5 (Medium / Large) · Full FT",
+        trainer_factory=_build_sd35_full,
+        fields=(
+            FieldSpec(
+                name="pretrained_model", label="SD3.5 base path *",
+                default=_DEFAULT_SD35_PRETRAINED, required=True, kind="path",
+            ),
+            _SD_SCRIPTS_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `sd-scripts/sd3_train.py`. Adafactor + fused backward.",
+        needs_pre_cache=False,
+    ),
+    # ─────────────────────────── HunyuanVideo ───────────────────────────
+    ModelPreset(
+        id="hunyuan-video-lora",
+        model_family="HunyuanVideo",
+        training_type="LoRA",
+        display_name="HunyuanVideo 13B · LoRA",
+        trainer_factory=_build_hunyuan_video_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_HUNYUAN_VIDEO_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_HUNYUAN_VIDEO_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder1_path", label="Text encoder 1 (LLaMA3) *",
+                default=_DEFAULT_LLAMA3_PATH, required=True, kind="path",
+                help="Set BRACKET_LLAMA3_PATH.",
+            ),
+            FieldSpec(
+                name="text_encoder2_path", label="Text encoder 2 (CLIP-L) *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+                help="Set BRACKET_CLIP_L_PATH.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/hv_train_network.py`. Video samples (.mp4); bracket extracts "
+            "representative frames before VLM judging. ffmpeg must be on PATH."
+        ),
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="hunyuan-video-full",
+        model_family="HunyuanVideo",
+        training_type="Full FT",
+        display_name="HunyuanVideo 13B · Full FT",
+        trainer_factory=_build_hunyuan_video_full,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_DIT_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder1_path", label="Text encoder 1 (LLaMA3) *",
+                default=_DEFAULT_LLAMA3_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder2_path", label="Text encoder 2 (CLIP-L) *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/hv_train.py`. 13B + video — heavy blocks_to_swap below 80 GB.",
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── Wan ───────────────────────────
+    ModelPreset(
+        id="wan22-lora",
+        model_family="Wan 2.2",
+        training_type="LoRA",
+        display_name="Wan 2.2 · LoRA",
+        trainer_factory=lambda **kw: _build_wan_lora(wan_version="2.2", **kw),
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_WAN_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_WAN_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_WAN_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_WAN_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (UMT5-XXL) *",
+                default=_DEFAULT_UMT5_PATH, required=True, kind="path",
+                help="Set BRACKET_UMT5_PATH.",
+            ),
+            FieldSpec(
+                name="task", label="Task (t2v-14B / i2v-14B / t2i-14B / 1_3B)",
+                default="t2v-14B", required=False, kind="string",
+                help="Wan training task selector. Defaults to text-to-video 14B.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/wan_train_network.py`. UMT5-XXL TE. Video samples.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="wan22-full",
+        model_family="Wan 2.2",
+        training_type="Full FT",
+        display_name="Wan 2.2 · Full FT",
+        trainer_factory=lambda **kw: _build_wan_full(wan_version="2.2", **kw),
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_WAN_DIT_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_WAN_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (UMT5-XXL) *",
+                default=_DEFAULT_UMT5_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="task", label="Task",
+                default="t2v-14B", required=False, kind="string",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/wan_train.py`. Adafactor + fused + heavy blocks_to_swap.",
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="wan21-lora",
+        model_family="Wan 2.1",
+        training_type="LoRA",
+        display_name="Wan 2.1 · LoRA",
+        trainer_factory=lambda **kw: _build_wan_lora(wan_version="2.1", **kw),
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_WAN_DIT_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_WAN_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (UMT5-XXL) *",
+                default=_DEFAULT_UMT5_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="task", label="Task",
+                default="t2v-14B", required=False, kind="string",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes="Wraps `musubi-tuner/wan_train_network.py` against Wan 2.1 weights.",
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── LTX-Video ───────────────────────────
+    ModelPreset(
+        id="ltx-video-lora",
+        model_family="LTX-Video",
+        training_type="LoRA",
+        display_name="LTX-Video · LoRA",
+        trainer_factory=_build_ltx_video_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_LTX_VIDEO_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_LTX_VIDEO_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_LTX_VIDEO_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_LTX_VIDEO_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (T5-XXL) *",
+                default=_DEFAULT_T5XXL_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/ltxv_train_network.py`. Smallest of the supported "
+            "video DiTs (~2B) — much faster per-step than Wan / Hunyuan."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── FramePack ───────────────────────────
+    ModelPreset(
+        id="framepack-lora",
+        model_family="FramePack",
+        training_type="LoRA",
+        display_name="FramePack · LoRA",
+        trainer_factory=_build_framepack_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_FRAMEPACK_DIT_PATH or _DEFAULT_HUNYUAN_VIDEO_DIT_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_FRAMEPACK_DIT_PATH.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder1_path", label="Text encoder 1 (LLaMA3) *",
+                default=_DEFAULT_LLAMA3_PATH, required=True, kind="path",
+            ),
+            FieldSpec(
+                name="text_encoder2_path", label="Text encoder 2 (CLIP-L) *",
+                default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/fpack_train_network.py`. Anchor-frame-conditioned "
+            "video LoRA on the HunyuanVideo backbone."
         ),
         needs_pre_cache=True,
     ),

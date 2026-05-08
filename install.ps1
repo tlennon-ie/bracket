@@ -129,11 +129,50 @@ BRACKET_VENV_PYTHON=$trainerPython
 BRACKET_MUSUBI_DIR=$musubiDir
 BRACKET_SD_SCRIPTS_DIR=$sdScriptsDir
 
-# Add when you have weights downloaded:
+# Add when you have weights downloaded. Each preset only needs the paths
+# relevant to its model family -- leave the rest commented.
+
+# --- SDXL --------------------------------------------------------------
+# BRACKET_SDXL_PRETRAINED=C:\path\to\sdxl-base-1.0
+
+# --- Z-Image -----------------------------------------------------------
 # BRACKET_VAE_PATH=C:\path\to\ae.safetensors
 # BRACKET_QWEN3_TE_PATH=C:\path\to\qwen_3_4b.safetensors
+
+# --- Flux-2-Klein ------------------------------------------------------
 # BRACKET_FLUX2_DIT_PATH=C:\path\to\flux-2-klein-base-9b-fp8.safetensors
 # BRACKET_MISTRAL3_TE_PATH=C:\path\to\mistral_3_small_flux2_fp8.safetensors
+
+# --- Flux.1 + Flux.1-Kontext ------------------------------------------
+# BRACKET_FLUX1_DIT_PATH=C:\path\to\flux1-dev.safetensors
+# BRACKET_FLUX1_AE_PATH=C:\path\to\ae.safetensors
+# BRACKET_FLUX1_KONTEXT_DIT_PATH=C:\path\to\flux1-kontext-dev.safetensors
+# BRACKET_T5XXL_PATH=C:\path\to\t5xxl_fp16.safetensors
+# BRACKET_CLIP_L_PATH=C:\path\to\clip_l.safetensors
+
+# --- Qwen-Image (TE = Qwen2.5-VL-7B, NOT Qwen3) -----------------------
+# BRACKET_QWEN_IMAGE_DIT_PATH=C:\path\to\qwen-image-20b-fp8.safetensors
+# BRACKET_QWEN_IMAGE_VAE_PATH=C:\path\to\qwen-image-vae.safetensors
+# BRACKET_QWEN_IMAGE_TE_PATH=C:\path\to\qwen2_5_vl_7b.safetensors
+# BRACKET_QWEN_IMAGE_EDIT_DIT_PATH=C:\path\to\qwen-image-edit.safetensors
+
+# --- SD3.5 (bundle file contains MMDiT + T5 + CLIPs) ------------------
+# BRACKET_SD35_PRETRAINED=C:\path\to\sd3.5_large.safetensors
+
+# --- HunyuanVideo + FramePack (dual TE: LLaMA3 + CLIP-L) --------------
+# BRACKET_HUNYUAN_VIDEO_DIT_PATH=C:\path\to\hunyuan-video-13b.safetensors
+# BRACKET_HUNYUAN_VIDEO_VAE_PATH=C:\path\to\hunyuan-video-vae.safetensors
+# BRACKET_LLAMA3_PATH=C:\path\to\llama3_8b.safetensors
+# BRACKET_FRAMEPACK_DIT_PATH=C:\path\to\framepack.safetensors
+
+# --- Wan 2.1 / 2.2 (single TE: UMT5-XXL) ------------------------------
+# BRACKET_WAN_DIT_PATH=C:\path\to\wan2.2-14b.safetensors
+# BRACKET_WAN_VAE_PATH=C:\path\to\wan-vae.safetensors
+# BRACKET_UMT5_PATH=C:\path\to\umt5-xxl.safetensors
+
+# --- LTX-Video --------------------------------------------------------
+# BRACKET_LTX_VIDEO_DIT_PATH=C:\path\to\ltx-video-dit.safetensors
+# BRACKET_LTX_VIDEO_VAE_PATH=C:\path\to\ltx-video-vae.safetensors
 "@
     Set-Content -Path $envFile -Value $envBody -Encoding utf8
     Write-Ok "Wrote .env"

@@ -271,6 +271,22 @@ def build_snapshot(
     )
 
 
+_SAMPLE_ASSET_EXTS: tuple[str, ...] = (
+    ".png", ".jpg", ".jpeg", ".webp",
+    ".mp4", ".webm", ".mov", ".mkv",
+)
+
+
+def _iter_sample_assets(sample_dir: Path) -> Iterable[Path]:
+    """Yield image and video sample files from `sample_dir`. Skips the
+    `_frames/` subdir produced by the scorer's video frame extractor."""
+    for entry in sample_dir.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() in _SAMPLE_ASSET_EXTS:
+            yield entry
+
+
 def gallery_items(output_dir: Path, max_items: int = 200) -> list[tuple[str, str]]:
     """Return (image_path, caption) pairs from every run's samples/ dir.
 
@@ -289,8 +305,8 @@ def gallery_items(output_dir: Path, max_items: int = 200) -> list[tuple[str, str
         sample_dir = run_dir / "output" / "sample"
         if not sample_dir.exists():
             continue
-        for img in sorted(sample_dir.glob("*.png")):
-            out.append((str(img), f"{run_dir.name} / {img.name}"))
+        for asset in sorted(_iter_sample_assets(sample_dir)):
+            out.append((str(asset), f"{run_dir.name} / {asset.name}"))
             if len(out) >= max_items:
                 return out
     return out
@@ -322,7 +338,7 @@ def gallery_groups(
         sample_dir = run_dir / "output" / "sample"
         if not sample_dir.exists():
             continue
-        imgs = list(sample_dir.glob("*.png"))
+        imgs = list(_iter_sample_assets(sample_dir))
         if not imgs:
             continue
         imgs.sort(key=lambda p: p.stat().st_mtime, reverse=True)

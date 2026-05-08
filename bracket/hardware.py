@@ -117,9 +117,49 @@ MUSUBI_DATALOADER_WORKERS_BY_TIER: dict[str, int] = {
 # batch=4 fp16/bf16 will OOM without ckpt and fall back to RAM paging.
 MODEL_PARAMS_B: dict[str, float] = {
     "sdxl":          2.5,   # 2.6B UNet
+    "sd35-medium":   2.5,   # SD3.5 Medium (~2.5B MMDiT)
+    "sd35-large":    8.0,   # SD3.5 Large (~8B MMDiT)
     "zimage":        9.0,   # 9B DiT (Tongyi-MAI/Z-Image base + Turbo)
+    "flux1":        12.0,   # Flux.1 dev/schnell (~12B DiT)
+    "flux1-kontext":12.0,   # Flux.1-Kontext (same backbone, edit conditioned)
     "flux2-klein":   9.0,   # Flux 2 Klein 9B (fp8 helps weights, not activations)
     "flux2-full":   32.0,
+    "qwen-image":   20.0,   # Qwen-Image 20B MMDiT
+    "qwen-image-edit": 20.0,
+    "hunyuan-video": 13.0,  # HunyuanVideo 13B DiT
+    "wan21":        14.0,   # Wan 2.1 14B (1.3B variant exists too)
+    "wan22":        14.0,
+    "ltx-video":     2.0,   # LTX-Video small DiT (~2B)
+    "framepack":    13.0,   # FramePack uses HunyuanVideo backbone
+}
+
+
+# Per-tier batch-size choices for video models. Video activations are dominated
+# by frame count not pixel count; bs=1 is the realistic default everywhere
+# below 80 GB. These tables exist to make video adapters consistent.
+VIDEO_LORA_BATCH_CHOICES_BY_TIER: dict[str, tuple[int, ...]] = {
+    "xl":    (1, 2),
+    "large": (1, 2),
+    "high":  (1,),
+    "med":   (1,),
+    "low":   (1,),
+    "tiny":  (1,),
+}
+VIDEO_LORA_DEFAULT_BATCH_BY_TIER: dict[str, int] = {
+    "xl": 1, "large": 1, "high": 1, "med": 1, "low": 1, "tiny": 1,
+}
+
+
+# `--blocks_to_swap` lets musubi swap N transformer blocks to CPU RAM. The
+# higher the number, the less VRAM but the slower training. These are sane
+# starting values for big DiTs (HunyuanVideo / Wan / Qwen-Image) per VRAM tier.
+BLOCKS_TO_SWAP_BY_TIER: dict[str, int] = {
+    "xl":    0,
+    "large": 0,
+    "high":  16,
+    "med":   28,
+    "low":   36,
+    "tiny":  40,
 }
 
 

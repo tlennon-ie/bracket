@@ -25,12 +25,16 @@ from bracket.ema import EMASmoother
 from bracket.frame import LossFrame
 from bracket.judge.base import JudgeReport, SampleJudge
 from bracket.tfevents_reader import TFEventsTail
+from bracket.video import (
+    VIDEO_EXTENSIONS, extract_all_videos, is_video_file, list_video_samples,
+)
 
 
 # sd-scripts writes samples like  candidate_<step>_<idx>_<seed>.png alongside
 # a candidate_<step>_<idx>_<seed>.txt that contains the prompt. We pair them
 # by stem so the judge knows which prompt produced which image.
 _SAMPLE_STEM_RE = re.compile(r"^(?P<base>.+)\.(?P<ext>png|jpg|jpeg|webp)$", re.IGNORECASE)
+_VIDEO_STEM_RE = re.compile(r"^(?P<base>.+)\.(?P<ext>mp4|webm|mov|mkv)$", re.IGNORECASE)
 
 
 @dataclass
@@ -100,6 +104,26 @@ class Scorer:
             # Loss-only — already in `report`. Tag the components.
             report.components["loss_only"] = 1.0
             return report
+
+        # If the trainer emitted videos (Wan / Hunyuan / LTX / FramePack),
+        # extract a small set of representative frames before judging. The
+        # extracted PNGs live in `sample_dir/_frames/` so the same pairing
+        # logic (sidecar .txt or filename idx) finds them.
+        videos = list_video_samples(sample_dir)
+        if videos:
+            frames_dir = sample_dir / "_frames"
+            extracted = extract_all_videos(videos, frames_dir=frames_dir)
+            for video, frames in extracted.items():
+                sidecar = video.with_suffix(".txt")
+                if not sidecar.exists():
+                    continue
+                # Replicate the prompt sidecar next to each extracted frame so
+                # _pair_samples_with_prompts picks it up via the .txt branch.
+                for frame in frames:
+                    frame.with_suffix(".txt").write_text(
+                        sidecar.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8",
+                    )
 
         prompt_for_image = _pair_samples_with_prompts(sample_dir, prompts)
         if not prompt_for_image:
@@ -180,9 +204,15 @@ def _pair_samples_with_prompts(
     if not sample_dir.exists():
         return {}
     out: dict[Path, str] = {}
-    for img in sorted(sample_dir.iterdir()):
-        if not img.is_file():
-            continue
+    # Walk one level deep so the `_frames/` subdir produced by video samplers
+    # (extract_all_videos) is included.
+    candidates: list[Path] = []
+    for entry in sorted(sample_dir.iterdir()):
+        if entry.is_file():
+            candidates.append(entry)
+        elif entry.is_dir() and entry.name == "_frames":
+            candidates.extend(sorted(p for p in entry.iterdir() if p.is_file()))
+    for img in candidates:
         m = _SAMPLE_STEM_RE.match(img.name)
         if not m:
             continue

@@ -19,9 +19,15 @@ def test_each_preset_has_unique_id_and_required_fields():
         assert required, f"{p.id} has no required fields"
 
 
-def test_list_families_unique_in_order():
+def test_list_families_includes_all_supported():
     families = list_model_families()
-    assert families == ["SDXL", "Z-Image", "Flux-2-Klein"]
+    # The first three are the original v0.1 set; later additions extend.
+    assert families[:3] == ["SDXL", "Z-Image", "Flux-2-Klein"]
+    expected_extension = {
+        "Flux.1", "Flux.1-Kontext", "Qwen-Image", "Qwen-Image-Edit",
+        "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "LTX-Video", "FramePack",
+    }
+    assert expected_extension.issubset(set(families))
 
 
 def test_training_types_for_known_families():
@@ -29,6 +35,17 @@ def test_training_types_for_known_families():
     assert set(training_types_for("Z-Image")) == {"LoRA", "Full FT"}
     # Flux-2-Klein in musubi has no full-FT script
     assert training_types_for("Flux-2-Klein") == ["LoRA"]
+    # Newer families
+    assert set(training_types_for("Flux.1")) == {"LoRA", "Full FT"}
+    assert training_types_for("Flux.1-Kontext") == ["LoRA"]
+    assert set(training_types_for("Qwen-Image")) == {"LoRA", "Full FT"}
+    assert training_types_for("Qwen-Image-Edit") == ["LoRA"]
+    assert set(training_types_for("SD3.5")) == {"LoRA", "Full FT"}
+    assert set(training_types_for("HunyuanVideo")) == {"LoRA", "Full FT"}
+    assert set(training_types_for("Wan 2.2")) == {"LoRA", "Full FT"}
+    assert training_types_for("Wan 2.1") == ["LoRA"]
+    assert training_types_for("LTX-Video") == ["LoRA"]
+    assert training_types_for("FramePack") == ["LoRA"]
 
 
 def test_get_preset_known_and_unknown():
@@ -74,3 +91,98 @@ def test_zimage_preset_says_pre_cache_required():
 def test_sdxl_preset_does_not_need_pre_cache():
     assert get_preset("SDXL", "LoRA").needs_pre_cache is False
     assert get_preset("SDXL", "Full FT").needs_pre_cache is False
+
+
+def _stub_musubi(tmp_path, script_name: str):
+    """Create a stub musubi-tuner directory with a no-op training script."""
+    musubi = tmp_path / "musubi-tuner"
+    pkg = musubi / "src" / "musubi_tuner"
+    pkg.mkdir(parents=True)
+    (pkg / script_name).write_text("# placeholder\n", encoding="utf-8")
+    py = tmp_path / "python.exe"
+    py.write_bytes(b"")
+    return musubi, py
+
+
+def test_qwen_image_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "qwen_image_train_network.py")
+    preset = get_preset("Qwen-Image", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder_path="/x/te", vram_gb=32.0,
+    )
+    assert trainer.name == "qwen-image-lora-musubi"
+
+
+def test_flux1_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "flux_train_network.py")
+    preset = get_preset("Flux.1", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/ae",
+        t5xxl_path="/x/t5", clip_l_path="/x/clip",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "flux1-lora-musubi"
+
+
+def test_hunyuan_video_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "hv_train_network.py")
+    preset = get_preset("HunyuanVideo", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder1_path="/x/llama", text_encoder2_path="/x/clip",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "hunyuan-video-lora-musubi"
+
+
+def test_wan22_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "wan_train_network.py")
+    preset = get_preset("Wan 2.2", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder_path="/x/umt5", vram_gb=32.0,
+    )
+    assert trainer.name == "wan-lora-musubi"
+    assert trainer.wan_version == "2.2"
+
+
+def test_ltx_video_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "ltxv_train_network.py")
+    preset = get_preset("LTX-Video", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder_path="/x/t5", vram_gb=32.0,
+    )
+    assert trainer.name == "ltx-video-lora-musubi"
+
+
+def test_framepack_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "fpack_train_network.py")
+    preset = get_preset("FramePack", "LoRA")
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder1_path="/x/llama", text_encoder2_path="/x/clip",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "framepack-lora-musubi"
+
+
+def test_sd35_lora_preset_constructs_trainer(tmp_path):
+    sd = tmp_path / "sd-scripts"
+    sd.mkdir()
+    (sd / "sd3_train_network.py").write_text("# placeholder\n", encoding="utf-8")
+    py = tmp_path / "python.exe"
+    py.write_bytes(b"")
+    preset = get_preset("SD3.5", "LoRA")
+    trainer = preset.trainer_factory(
+        sd_scripts_dir=str(sd), venv_python=str(py),
+        pretrained_model="/x/sd3.5", vram_gb=32.0,
+    )
+    assert trainer.name == "sd35-lora-sd-scripts"
