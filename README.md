@@ -1,205 +1,203 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./assets/logo-dark.png">
-    <img src="./assets/logo.png" alt="Bracket" width="160">
+    <img src="./assets/logo.png" alt="bracket" width="180">
   </picture>
 </p>
 
-<h1 align="center">Bracket</h1>
+<h1 align="center">bracket</h1>
+
+<p align="center"><em>Train the same diffusion model eight ways. Pick the one that looks best. With a p-value.</em></p>
 
 <p align="center">
-  <em>Train the same diffusion model eight ways. Pick the one that looks best. With a p-value.</em>
+  <img src="https://img.shields.io/badge/license-MIT-1f1f1f.svg" alt="License MIT">
+  <img src="https://img.shields.io/badge/python-3.10%2B-1f1f1f.svg" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/cross--platform-linux%20%C2%B7%20mac%20%C2%B7%20windows-1f1f1f.svg" alt="Cross-platform">
+  <img src="https://img.shields.io/badge/trainers-sd--scripts%20%C2%B7%20musubi--tuner-1f1f1f.svg" alt="Trainers">
 </p>
 
-<p align="center">
-  <a href="https://pypi.org/project/bracket-ml/"><img src="https://img.shields.io/pypi/v/bracket-ml.svg" alt="PyPI"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"></a>
-</p>
+![bracket Monitor tab — live loss chart, score history, sticky run controls](./assets/screenshots/monitor.png)
 
----
+## What it is
 
-You're fine-tuning Z-Image on 200 portraits. Your last 40k-step run had flat loss
-for 38k steps and you still don't know if your learning rate was wrong, your
-warmup was wrong, or the dataset is the issue. The Discord said `lr=1e-5`. The
-Civitai post said `lr=4e-6`. Loss is too noisy to read. You're about to spend
-another eight hours guessing.
+bracket is a single-machine hyperparameter-search and ranking tool for diffusion-model fine-tunes. You point it at a dataset and a base model, set a budget, and it runs the same fine-tune at many configurations on a subset of your data, has a vision model rate the generated samples, and reports which config wins — with confidence intervals.
 
-Bracket runs the same fine-tune at eight different configurations on a subset of
-your data, has a vision model rate the generated samples, and tells you which
-config wins — with confidence intervals.
+It drives the trainers you already use through real `accelerate launch` subprocesses. It does not re-implement training.
 
-```text
-                       config       score   adherence  quality  Δ vs baseline   95% CI         p
-   ────────────────────────────────────────────────────────────────────────────────────────────────
-1. cand-007 (lr=2e-6)   0.412      8.4/10     8.1/10   −0.187          [−0.24, −0.13]  0.003
-2. cand-003 (lr=5e-6)   0.451      8.0/10     7.9/10   −0.148          [−0.21, −0.09]  0.011
-3. baseline             0.599      6.8/10     7.2/10    —               —              —
-```
+- Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA).
+- Search: Optuna TPE with curated warm-start, or Random.
+- Judge: local LMStudio + Qwen3-VL by default. Hot-swappable.
+- Stats: Welch's t-test on best vs runner-up. Honest about single-seed results.
 
-It runs against the trainers you already use — `sd-scripts` for SDXL, `musubi-tuner`
-for Z-Image and Flux-2-Klein — through real `accelerate launch` subprocesses.
-Bracket never re-implements training. It searches.
+No cloud. No paid tier. No telemetry.
 
----
+## Who it's for
 
-## Install
+- Practitioners who keep losing eight hours to a 40k-step fine-tune that ended with flat loss and bad samples, and want to know in two hours whether their LR was wrong, their warmup was wrong, or the dataset is the issue.
+- Researchers running ablations across `(model, dataset, optimizer)` triples and tired of writing one-off bash scripts that don't compose.
+- LoRA authors who want a defensible "best config" with a p-value attached, not a Discord vibe-check.
 
-```bash
-# Linux / macOS / WSL2
-python -m pip install bracket-ml
-```
+## Who it's not for
 
-```powershell
-# Windows / PowerShell — drop into your existing trainer venv
-& "C:/path/to/your/trainer-venv/Scripts/python.exe" -m pip install bracket-ml
-```
-
-Python 3.10+. Requires the trainer (sd-scripts or musubi-tuner) installed
-separately — Bracket calls into them, it does not vendor them.
+- Multi-node distributed training — bracket runs sequential trials on one box.
+- Hosted / managed training — runs on your hardware, your data, your weights.
 
 ## Quick start
 
 ```bash
-bracket --trainer zimage-full \
-        --dataset-toml ./configs/portraits.toml \
-        --sample-prompts ./configs/prompts.txt \
-        --budget 8 --seeds-per-config 2 \
-        --max-steps-per-run 300 \
-        --judge lmstudio \
-        --output-dir ./runs/portraits-001
+git clone https://github.com/tlennon-ie/bracket.git
+cd bracket
+./install.sh        # macOS / Linux / WSL2
+# or
+.\install.ps1       # Windows PowerShell
+# or
+install.bat         # Windows cmd.exe
 ```
 
-Or open the UI:
+The installer detects your GPU (`nvidia-smi` → CUDA wheel match), creates `.venv/`, installs bracket editable, clones `musubi-tuner` and `sd-scripts` into `~/.cache/bracket/trainers/`, and writes a `.env` with sensible defaults. Re-running is idempotent.
 
 ```bash
-bracket-ui   # opens http://127.0.0.1:7860
+./launch.sh         # serves http://127.0.0.1:8000
 ```
 
-A typical session on a single 5090: budget 8, 2 seeds each, 300 steps per run,
-plus a 3-finalist long stage at 1500 steps — about 2 to 3 hours wall clock. Each
-trial writes its own `logs/stdout.log` and tfevents under
-`runs/<session>/runs/<run_id>/`.
+That single command starts a FastAPI server with the React frontend mounted on the same port. No separate UI process, no cloud.
 
 ## How it works
 
 ```
-                            ┌─────────────────────────┐
-                            │   bracket orchestrate   │
-                            │   stage 1 (short runs)  │
-                            └────────────┬────────────┘
-       baseline (your hand-tuned config) │
-                          ↓              │
-       curated known-good warm-start ────┤
-                          ↓              │
-       Optuna TPE / random search ───────┤  knobs → trainer
-                                         │  trainer → samples + tfevents
-                                         │  samples → VLM judge (LMStudio + Qwen3-VL)
-                                         ↓
-                            ┌─────────────────────────┐
-                            │  Top-K finalists →      │
-                            │  longer-run finals      │
-                            └────────────┬────────────┘
-                                         ↓
-                            ┌─────────────────────────┐
-                            │  Markdown report:       │
-                            │  Welch's t · 95% CI     │
-                            └─────────────────────────┘
+                       ┌─────────────────────────┐
+                       │   bracket orchestrate   │
+                       │   stage 1 (short runs)  │
+                       └────────────┬────────────┘
+   baseline  (your hand-tuned config)│
+                     ↓               │
+   curated  (per-trainer warm-start)─┤
+                     ↓               │
+   search   (Optuna TPE / random)────┤   knobs ───→ trainer
+                                     │   trainer ─→ samples + tfevents
+                                     │   samples ─→ VLM judge
+                                     ↓
+                       ┌─────────────────────────┐
+                       │   Top-K finalists →     │
+                       │   longer-run finals     │
+                       └────────────┬────────────┘
+                                    ↓
+                       ┌─────────────────────────┐
+                       │   Markdown report:      │
+                       │   Welch's t · 95% CI    │
+                       └─────────────────────────┘
 ```
 
-Five stages:
+Five stages: baseline, curated warm-start, TPE search, finals re-rank, report. Every trial writes its own `logs/stdout.log` and tfevents under `runs/<session>/runs/<run_id>/`. Resume is automatic — re-running with the same `--output-dir` continues where the ledger left off.
 
-1. **Baseline.** Your hand-tuned config runs first. Everything else is measured against it.
-2. **Curated warm-start.** Each trainer adapter ships a small set of known-good configs (e.g. Adafactor + warmup=50 for Z-Image full-FT). Bracket runs those before anything random.
-3. **Search.** Optuna TPE (smart — learns from history) or random (baseline). Each candidate runs `seeds_per_config` times so the score has variance.
-4. **Finals.** Top-K candidates by mean score get a longer second-stage run. Catches "looks good at 300 steps but plateaus by 1500".
-5. **Report.** Markdown out: ranked configs, sample-quality breakdown, Welch's t-test on best vs runner-up, 95% CI on best vs baseline.
+## The dashboard
 
-## Why Bracket and not...
+| | |
+|---|---|
+| ![Setup](./assets/screenshots/setup.png) | **Setup** — cascading model picker, dataset TOML drop with bucket preview, judge config. |
+| ![Run](./assets/screenshots/run.png) | **Run** — budget the search, tune finals, see a wall-time estimate before you start. |
+| ![Monitor](./assets/screenshots/monitor.png) | **Monitor** — live loss chart smoothed client-side (drag the slider; no roundtrip), score history, gallery. |
+| ![Results](./assets/screenshots/results.png) | **Results** — markdown report with the verdict, ledger table, comparison mode for sample images. |
 
-- **Optuna alone.** Optuna doesn't know what a diffusion sample is. It will minimise your training loss happily while your samples melt. Bracket uses Optuna *underneath* and adds the visual signal Optuna lacks.
-- **W&B Sweeps.** Same blind spot, plus a paywall and a remote dashboard for what should be a local-first tool. Bracket emits all artifacts to a directory you already have.
-- **Hand-running sd-scripts / musubi-tuner.** That's exactly what Bracket replaces — and it doesn't replace the trainers themselves, it drives them.
-- **AI-Toolkit.** AI-Toolkit is a unified *trainer* with a UI; it doesn't search hyperparameters or judge outputs. Bracket complements it (you could plug AI-Toolkit in as a trainer adapter).
-- **Civitai's online trainer.** A black box on someone else's GPU. Bracket runs on your hardware, your data never leaves the box, and you can read the source.
+Tab transitions are 200ms. The Monitor's loss chart updates over WebSocket — no five-second poll lag. The smoothing slider recomputes EMA in JS from a raw buffer. Keyboard shortcuts: `r` refresh · `Esc` stop · `[` `]` cycle smoothing · `g s/r/m/o` chord nav.
 
-## Supported trainers
+## Architecture in one screen
 
-| Trainer | LoRA | Full FT | Notes |
-|---|:-:|:-:|---|
-| SDXL | ✓ | ✓ | via sd-scripts |
-| Z-Image (base / Turbo) | ✓ | ✓ | via musubi-tuner; Qwen3 text encoder; auto pre-cache |
-| Flux-2-Klein 9B | ✓ | — | via musubi-tuner; Mistral-3-Small text encoder |
+| Concern | Single source of truth |
+|---|---|
+| Trainer adapters (SDXL, Z-Image, Flux-2-Klein) | [`bracket/trainer/`](./bracket/trainer/) |
+| Hyperparameter search controllers | [`bracket/search/`](./bracket/search/) |
+| Run launcher (subprocess + tfevents) | [`bracket/orchestrator/runner.py`](./bracket/orchestrator/runner.py) |
+| Scoring (loss + VLM) | [`bracket/orchestrator/scorer.py`](./bracket/orchestrator/scorer.py) |
+| Orchestration loop | [`bracket/orchestrator/loop.py`](./bracket/orchestrator/loop.py) |
+| VLM judge protocol + LMStudio impl | [`bracket/judge/`](./bracket/judge/) |
+| Markdown report | [`bracket/proof/report.py`](./bracket/proof/report.py) |
+| Model + training-type registry | [`bracket/registry.py`](./bracket/registry.py) |
+| FastAPI server (HTTP + WebSocket + static SPA) | [`bracket/api/`](./bracket/api/) |
+| React frontend (Vite + shadcn/ui) | [`frontend/`](./frontend/) |
 
-Adding a new trainer: implement the `Trainer` protocol in `bracket/trainer/` and register a preset. ~150 lines for SDXL, can be done in an afternoon.
+Every concern has exactly one canonical module. Adding a new trainer is ~150 lines: implement the `Trainer` protocol and register a preset.
 
-## The judge
+## Configuration
 
-By default, Bracket scores runs purely from training loss (cheap, but fooled by overfit-shaped curves). Wire up a local [LMStudio](https://lmstudio.ai) vision model (Qwen3-VL, LLaVA, MiniCPM-V) and Bracket will:
+Settings live in `.env`. The installer writes one for you. Override anything by editing the file or exporting in your shell.
 
-1. Generate sample images via the trainer's own sampling step.
-2. Send each image + the prompt that produced it to LMStudio.
-3. Get back JSON scores 0–10 on prompt adherence, visual quality, artifact-freeness.
-4. Combine with the loss signal (weights configurable; default 0.3 loss / 0.7 sample).
+- `BRACKET_TRAINERS_ROOT` — where the installer cloned the trainers (default `~/.cache/bracket/trainers/`).
+- `BRACKET_VENV_PYTHON` — python from the trainer venv that bracket invokes as a subprocess.
+- `BRACKET_MUSUBI_DIR`, `BRACKET_SD_SCRIPTS_DIR` — clone roots for each trainer.
+- `BRACKET_VAE_PATH`, `BRACKET_QWEN3_TE_PATH`, `BRACKET_FLUX2_DIT_PATH`, `BRACKET_MISTRAL3_TE_PATH` — checkpoint defaults shown in the UI. Empty by default; the user fills them in via Setup.
+- `BRACKET_CORS_ORIGINS` — comma-separated allowlist for the dev server. Production serves the SPA same-origin so this is unused.
 
-The judge runs locally. Your samples don't leave your machine. The judge is hot-swappable — see [`docs/judges.md`](./docs/judges.md) for adapting it to OpenAI / Claude / a custom local model.
+There are no hardcoded paths in the package. The installer is the only place that materialises a default location.
 
-## Confidence claims, honestly
+## Why bracket and not…
 
-Bracket is rigorous about what it can and can't tell you.
+- **Optuna alone.** Optuna doesn't know what a diffusion sample is. It will minimise your training loss happily while your samples melt. bracket uses Optuna *underneath* and adds the visual signal Optuna lacks.
+- **W&B Sweeps.** Same blind spot, plus a paywall and a remote dashboard for what should be a local tool. bracket emits all artifacts to a directory you already have.
+- **Hand-running sd-scripts / musubi-tuner.** That's exactly what bracket replaces — and it doesn't replace the trainers themselves, it drives them.
+- **AI-Toolkit.** AI-Toolkit is a unified *trainer* with a UI. bracket is a *search* on top of the trainers AI-Toolkit also drives.
+- **Civitai's online trainer.** A black box on someone else's GPU. bracket runs on your hardware, your data never leaves the box, you can read the source.
 
-It can tell you:
-> Within the declared search space and the budget, configuration **C** had the lowest mean score across **N** seeds. It beat the hand-tuned baseline by **Δ** (95% CI: [low, high]; Welch's t p=**p**).
+## FAQ
 
-It cannot tell you:
-- That **C** is the globally optimal config — search is bounded by your budget.
-- That **C** will still win at 8000 steps. The finals stage mitigates this; it doesn't eliminate it.
-- That **C** generalises to a different dataset.
+**Why a budget instead of running until convergence?**
+Diffusion fine-tunes don't have a clean convergence criterion — loss curves are noisy and the right answer is usually visible by step 200-500 if it's going to be visible at all. bracket runs short trials, ranks them, then promotes the top-K to longer runs. You get a verdict in hours, not days.
 
-When seeds-per-config is 1, the report says "single-seed: confidence interval skipped". When p-values are noisy, it says "marginal — extend budget". No marketing.
+**Does the visual judge replace the loss?**
+No. Default scoring is `0.3 * loss + 0.7 * sample_score`. Loss catches divergence cheaply; the VLM catches "loss is fine but the samples melted". You can move the dial all the way either direction.
 
-<details>
-<summary><strong>Sample report (real output, names changed)</strong></summary>
+**Do I need an Nvidia GPU?**
+For training: yes — the trainers bracket drives need CUDA. For the bracket process itself: no — it's a Python orchestrator, not a GPU consumer. The installer installs a CPU-only PyTorch wheel into the trainer venv if it doesn't see `nvidia-smi` and warns that training will be slow.
 
-```markdown
-# Bracket · orchestration report
+**Does my data get sent anywhere?**
+No. The judge runs locally via LMStudio. Training subprocesses write to your filesystem. Bracket has no telemetry, no opt-out flag, no analytics endpoint to disable.
 
-- Training runs: 18 (unique configs: 9, scored: 9, disqualified: 0)
-- Multi-seed: up to 2 seeds per config — confidence intervals computed
-- Visual scoring: 18/18 runs judged by LMStudio (qwen3-vl-8b)
+**Why is the Monitor's loss curve smoothing so smooth?**
+It's TensorBoard-style EMA computed in the browser from a raw points buffer. Drag the slider — it recomputes at 60 fps with no backend roundtrip.
 
-## Verdict
+**How does it pick the "best" run?**
+Lowest mean score (lower is better) across all seeds for that config, with the disqualified set excluded. With ≥2 seeds-per-config it also reports a Welch's t-test p-value vs runner-up and a 95% CI vs baseline. With a single seed the report says so explicitly.
 
-**cand-007** beat the baseline by Δ=−0.187 (lower is better).
-95% CI: [−0.241, −0.133]. Welch's t-test p = 0.003. **High confidence.**
+**Can I run it headless?**
+Yes. `bracket --trainer zimage-full --dataset-toml ./configs/x.toml --budget 8 ...`. Same orchestrator under the hood as the UI.
 
-## Top configs
+**Why "bracket"?**
+Photographers bracket exposures. Tournament brackets pick a winner. Both fit what this tool does.
 
-| rank | config_id | role      | n | mean   | std    | learning_rate | warmup | dim |
-| 1    | a3f...c1  | candidate | 2 | 0.412  | 0.014  | 2e-6          | 100    | 32  |
-| 2    | b07...4e  | candidate | 2 | 0.451  | 0.022  | 5e-6          | 50     | 32  |
-| 3    | 11b...a9  | curated   | 2 | 0.488  | 0.018  | 1e-5          | 50     | 16  |
+## Working with an AI coding agent
+
+Drop the repo into Cursor / Claude Code / Aider. The repo ships with `CLAUDE.md` (architecture-as-table for agents) and `.claude/skills/` (four named skills covering install, run, debug, and adding a trainer). Every operation an agent might need is documented there with concrete commands and file paths.
+
 ```
-
-</details>
+.claude/skills/
+├── bracket-quickstart/SKILL.md
+├── bracket-run-session/SKILL.md
+├── bracket-debug-run/SKILL.md
+└── bracket-add-trainer/SKILL.md
+```
 
 ## Roadmap
 
-- [ ] **v0.2** — Per-step VLM scoring (intermediate sampling): catch divergence at step 200 instead of step 500.
-- [ ] **v0.2** — React + Vite UI to replace Gradio (in flight; see [`docs/FRONTEND_MIGRATION_PLAN.md`](./docs/FRONTEND_MIGRATION_PLAN.md)).
-- [ ] **v0.3** — True ASHA (multi-rung promotion, async — kills bad runs early).
-- [ ] **v0.4** — Cross-trainer transfer learning: TPE warmup from prior sessions on related models.
-- [ ] **v0.5** — Adapters for AI-Toolkit, simpletuner, OneTrainer.
+Honest, scoped, and shippable. See [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the full list — highlights:
 
-Not on the roadmap: distributed multi-node, cloud bursting, paid tiers. Bracket is local-first and stays that way.
+- v0.2 — per-step VLM scoring, true ASHA, comparison mode polish.
+- v0.3 — HunyuanDiT, Sana, Lumina-Next, AI-Toolkit adapter.
+- v0.4 — video diffusion (Wan-2.2, HunyuanVideo).
+- v0.5 — LLMs (Axolotl, torchtune, unsloth) with an `LLMJudge` for perplexity / task-eval / structured-output.
+
+Not on the roadmap: distributed multi-node, cloud bursting, paid tiers.
 
 ## Contributing
 
-Issues and PRs welcome. Before opening a PR:
+Small fixes welcome. For larger changes (new trainer adapter, new judge backend), please open an issue first.
 
-1. `pytest -q` should pass — the suite covers trainer adapters, search, scoring, and the orchestrator loop end-to-end.
-2. New trainer adapter? Add a unit test under `tests/test_trainer_<name>.py` modelled on `test_trainer_sdxl.py`.
+```bash
+pytest -q                      # full suite, ~17s
+cd frontend && npm run lint    # frontend, Biome
+```
+
+The agent skill at [`.claude/skills/bracket-add-trainer/SKILL.md`](./.claude/skills/bracket-add-trainer/SKILL.md) is the spec for new trainer adapters.
 
 ## License
 
-MIT. See [`LICENSE`](./LICENSE).
+MIT — see [LICENSE](./LICENSE).

@@ -27,3 +27,21 @@ Thumbs.db
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/dist/
+
+# Environment
+.env
+.env.local
+
+# Model weights / large artifacts (never commit)
+*.safetensors
+*.ckpt
+*.bin
+*.pt
+*.pth
+
+# Dev-internal docs (deliverables that don't ship public)
+docs/BRANDING_PROPOSAL.md
+docs/FRONTEND_MIGRATION_PLAN.md
+docs/README_STYLE_TEMPLATE.md
+docs/REPO_AUDIT.md

@@ -13,23 +13,69 @@ Adding a new preset = add an entry to PRESETS. UI rebuilds automatically.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from bracket.trainer.base import Trainer
 
 
-# Common defaults pulled from the user's setup. Override in the UI.
-_DEFAULT_VENV_PYTHON = "I:/AI/musubi-tuner/venv/Scripts/python.exe"
-_DEFAULT_SD_SCRIPTS = "I:/AI/musubi-tuner/sd-scripts"
-_DEFAULT_MUSUBI_DIR = "I:/AI/musubi-tuner"
-_DEFAULT_SDXL_PRETRAINED = (
-    "I:/AI/ExtraModels/diffusion_format/huggingface/hub/"
-    "models--stabilityai--stable-diffusion-xl-base-1.0/snapshots/"
-    "462165984030d82259a11f4367a4eed129e94a7b"
+# Default paths are resolved (in priority order):
+#   1. Environment variables (BRACKET_VENV_PYTHON, BRACKET_MUSUBI_DIR, …)
+#   2. The bundled trainers root at ~/.cache/bracket/trainers/ (created by
+#      install.sh / install.ps1 / install.bat — see scripts/install_*).
+#   3. An empty string — the user fills it in via the Setup tab.
+#
+# Nothing in this module assumes a specific developer's filesystem. Public
+# users land on empty defaults if they haven't run the installer; pre-existing
+# users can keep their setup by exporting the env vars.
+
+_TRAINERS_ROOT = Path(
+    os.environ.get("BRACKET_TRAINERS_ROOT", str(Path.home() / ".cache" / "bracket" / "trainers"))
 )
-_DEFAULT_DATASET_TOML = "I:/AI/musubi-tuner/configs/zimage_finetune_dataset.toml"
-_DEFAULT_SAMPLE_PROMPTS = "I:/AI/musubi-tuner/configs/zimage_sample_prompts.txt"
+
+
+def _env_or_default(env_var: str, default: str) -> str:
+    """Return the env-var value if set, else the default. Empty string if neither."""
+    return os.environ.get(env_var, default)
+
+
+def _venv_python_default() -> str:
+    """Resolve the trainer venv python — env var or installed location."""
+    if (env := os.environ.get("BRACKET_VENV_PYTHON")):
+        return env
+    suffix = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    candidate = _TRAINERS_ROOT / "venv" / suffix
+    return str(candidate) if candidate.exists() else ""
+
+
+def _musubi_dir_default() -> str:
+    if (env := os.environ.get("BRACKET_MUSUBI_DIR")):
+        return env
+    candidate = _TRAINERS_ROOT / "musubi-tuner"
+    return str(candidate) if candidate.exists() else ""
+
+
+def _sd_scripts_default() -> str:
+    if (env := os.environ.get("BRACKET_SD_SCRIPTS_DIR")):
+        return env
+    candidate = _TRAINERS_ROOT / "musubi-tuner" / "sd-scripts"
+    return str(candidate) if candidate.exists() else ""
+
+
+_DEFAULT_VENV_PYTHON = _venv_python_default()
+_DEFAULT_SD_SCRIPTS = _sd_scripts_default()
+_DEFAULT_MUSUBI_DIR = _musubi_dir_default()
+# These are example paths only — public users will set them via Setup tab
+# once they've downloaded the weights they want to fine-tune.
+_DEFAULT_SDXL_PRETRAINED = _env_or_default("BRACKET_SDXL_PRETRAINED", "")
+_DEFAULT_DATASET_TOML = _env_or_default("BRACKET_DATASET_TOML", "")
+_DEFAULT_SAMPLE_PROMPTS = _env_or_default("BRACKET_SAMPLE_PROMPTS", "")
+_DEFAULT_VAE_PATH = _env_or_default("BRACKET_VAE_PATH", "")
+_DEFAULT_QWEN3_TE_PATH = _env_or_default("BRACKET_QWEN3_TE_PATH", "")
+_DEFAULT_FLUX2_DIT_PATH = _env_or_default("BRACKET_FLUX2_DIT_PATH", "")
+_DEFAULT_MISTRAL3_TE_PATH = _env_or_default("BRACKET_MISTRAL3_TE_PATH", "")
 
 
 @dataclass(frozen=True)
@@ -144,7 +190,8 @@ _DIT_FIELD = FieldSpec(
 )
 _VAE_FIELD = FieldSpec(
     name="vae_path", label="VAE weights (.safetensors) *",
-    default="I:/AI/ExtraModels/vae/ae.safetensors", required=True, kind="path",
+    default=_DEFAULT_VAE_PATH, required=True, kind="path",
+    help="Path to the VAE checkpoint (.safetensors). Set BRACKET_VAE_PATH to change the default.",
 )
 
 
@@ -194,8 +241,9 @@ PRESETS: tuple[ModelPreset, ...] = (
             _VAE_FIELD,
             FieldSpec(
                 name="text_encoder_path", label="Text encoder (Qwen3) *",
-                default="I:/AI/ExtraModels/textencoders/qwen_3_4b.safetensors",
+                default=_DEFAULT_QWEN3_TE_PATH,
                 required=True, kind="path",
+                help="Set BRACKET_QWEN3_TE_PATH to change the default.",
             ),
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,
@@ -218,8 +266,9 @@ PRESETS: tuple[ModelPreset, ...] = (
             _VAE_FIELD,
             FieldSpec(
                 name="text_encoder_path", label="Text encoder (Qwen3) *",
-                default="I:/AI/ExtraModels/textencoders/qwen_3_4b.safetensors",
+                default=_DEFAULT_QWEN3_TE_PATH,
                 required=True, kind="path",
+                help="Set BRACKET_QWEN3_TE_PATH to change the default.",
             ),
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,
@@ -239,14 +288,16 @@ PRESETS: tuple[ModelPreset, ...] = (
         fields=(
             FieldSpec(
                 name="dit_path", label="DiT weights (.safetensors) *",
-                default="I:/AI/ExtraModels/diffusion/flux-2-klein-base-9b-fp8.safetensors",
+                default=_DEFAULT_FLUX2_DIT_PATH,
                 required=True, kind="path",
+                help="Set BRACKET_FLUX2_DIT_PATH to change the default.",
             ),
             _VAE_FIELD,
             FieldSpec(
                 name="text_encoder_path", label="Text encoder (Mistral-3-Small) *",
-                default="I:/AI/ExtraModels/textencoders/mistral_3_small_flux2_fp8.safetensors",
+                default=_DEFAULT_MISTRAL3_TE_PATH,
                 required=True, kind="path",
+                help="Set BRACKET_MISTRAL3_TE_PATH to change the default.",
             ),
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,

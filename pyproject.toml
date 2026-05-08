@@ -41,7 +41,8 @@ dependencies = [
     "protobuf>=4.21",
     "toml>=0.10",
     "optuna>=3.5",
-    "gradio>=4.40",
+    "pandas>=2.0",
+    "pydantic>=2.5",
 ]
 
 [project.optional-dependencies]
@@ -57,9 +58,8 @@ Repository = "https://github.com/tlennon-ie/bracket"
 Issues = "https://github.com/tlennon-ie/bracket/issues"
 
 [project.scripts]
-bracket = "bracket.orchestrator_cli:main"
-bracket-serve = "bracket.cli:serve"
-bracket-ui = "bracket.ui.app:main"
+bracket = "bracket.cli.orchestrate:main"
+bracket-serve = "bracket.api.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["bracket*"]
@@ -67,3 +67,6 @@ include = ["bracket*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "websocket: WebSocket integration tests (deselect with '-m \"not websocket\"').",
+]

@@ -1,0 +1,241 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Bracket design tokens. Linear/Vercel/shadcn shape.
+   Single warm accent (`--accent-bracket`) for "best run" highlight + primary.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+	--font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+		Roboto, sans-serif;
+	--font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", "Fira Code", Menlo,
+		monospace;
+
+	--text-xs: 12px;
+	--text-sm: 14px;
+	--text-base: 15px;
+	--text-lg: 18px;
+	--text-2xl: 24px;
+	--text-3xl: 30px;
+
+	--radius: 8px;
+	--radius-sm: 6px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 12px;
+}
+
+/* Light theme (default) */
+:root {
+	--background: oklch(98% 0.005 240);
+	--foreground: oklch(15% 0.01 240);
+	--card: oklch(100% 0 0);
+	--card-foreground: oklch(15% 0.01 240);
+	--popover: oklch(100% 0 0);
+	--popover-foreground: oklch(15% 0.01 240);
+	--primary: oklch(70% 0.18 50);
+	--primary-foreground: oklch(15% 0.01 240);
+	--secondary: oklch(95% 0.005 240);
+	--secondary-foreground: oklch(20% 0.01 240);
+	--muted: oklch(96% 0.005 240);
+	--muted-foreground: oklch(45% 0.01 240);
+	--accent: oklch(95% 0.005 240);
+	--accent-foreground: oklch(20% 0.01 240);
+	--accent-bracket: oklch(70% 0.18 50);
+	--destructive: oklch(60% 0.2 25);
+	--destructive-foreground: oklch(98% 0.005 240);
+	--success: oklch(70% 0.18 145);
+	--warning: oklch(80% 0.15 80);
+	--border: oklch(92% 0.005 240);
+	--input: oklch(92% 0.005 240);
+	--ring: oklch(70% 0.18 50);
+	--grid: oklch(94% 0.005 240);
+	color-scheme: light;
+}
+
+.dark {
+	--background: oklch(12% 0.01 240);
+	--foreground: oklch(95% 0.005 240);
+	--card: oklch(15% 0.01 240);
+	--card-foreground: oklch(95% 0.005 240);
+	--popover: oklch(15% 0.01 240);
+	--popover-foreground: oklch(95% 0.005 240);
+	--primary: oklch(70% 0.18 50);
+	--primary-foreground: oklch(12% 0.01 240);
+	--secondary: oklch(20% 0.01 240);
+	--secondary-foreground: oklch(95% 0.005 240);
+	--muted: oklch(20% 0.01 240);
+	--muted-foreground: oklch(65% 0.01 240);
+	--accent: oklch(22% 0.01 240);
+	--accent-foreground: oklch(95% 0.005 240);
+	--accent-bracket: oklch(72% 0.18 50);
+	--destructive: oklch(60% 0.2 25);
+	--destructive-foreground: oklch(95% 0.005 240);
+	--success: oklch(70% 0.18 145);
+	--warning: oklch(80% 0.15 80);
+	--border: oklch(20% 0.01 240);
+	--input: oklch(22% 0.01 240);
+	--ring: oklch(72% 0.18 50);
+	--grid: oklch(18% 0.01 240);
+	color-scheme: dark;
+}
+
+/* Map CSS vars into Tailwind v4 utility colour scale. */
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent-bracket: var(--accent-bracket);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-success: var(--success);
+	--color-warning: var(--warning);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+}
+
+/* Base layer — interaction polish. */
+* {
+	border-color: var(--border);
+}
+html,
+body {
+	height: 100%;
+}
+body {
+	background: var(--background);
+	color: var(--foreground);
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+/* Visible focus rings — accessibility floor. */
+:where(
+		button,
+		input,
+		select,
+		textarea,
+		a,
+		[role="button"],
+		[role="option"],
+		[tabindex]
+	):focus-visible {
+	outline: 2px solid var(--ring);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* Skip-link, hidden until focused. */
+.skip-link {
+	position: absolute;
+	top: -40px;
+	left: 8px;
+	background: var(--card);
+	color: var(--foreground);
+	padding: 6px 12px;
+	border-radius: 6px;
+	z-index: 100;
+	transition: top 120ms ease;
+}
+.skip-link:focus {
+	top: 8px;
+}
+
+/* Typographic helpers. */
+.font-display {
+	font-family: var(--font-sans);
+	letter-spacing: -0.01em;
+}
+.font-mono-tight {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Animation — kept tasteful, ≤200ms. */
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+.shimmer {
+	background: linear-gradient(
+		90deg,
+		var(--muted) 0%,
+		var(--accent) 50%,
+		var(--muted) 100%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.6;
+		transform: scale(0.85);
+	}
+}
+.pulse-dot {
+	animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* Print stylesheet for Results. */
+@media print {
+	.no-print,
+	nav[aria-label="Primary navigation"],
+	[data-run-controls],
+	.skip-link {
+		display: none !important;
+	}
+	body {
+		background: white;
+		color: black;
+	}
+	main {
+		max-width: none !important;
+		margin: 0 !important;
+		padding: 0 !important;
+	}
+}
+
+/* Scrollbar refinements (subtle, system-feeling). */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 8px;
+	border: 2px solid transparent;
+	background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: var(--muted-foreground);
+	background-clip: content-box;
+}
