@@ -300,6 +300,36 @@ def test_build_snapshot_judge_summary_when_configured_but_no_scored_row(tmp_path
     assert "waiting for the first run" in snap.judge_summary
 
 
+def test_build_snapshot_judge_summary_includes_failure_breakdown(tmp_path: Path):
+    """When the judge runs but some images fail to parse, the user must
+    see WHY in the summary line — not just '(N failed)'."""
+    out = tmp_path / "session"
+    (out / "runs").mkdir(parents=True)
+    _write_ledger(out / "ledger.jsonl", [
+        {"role": "baseline", "run_id": "baseline-000-s0", "score": 0.5,
+         "score_components": {"final_smoothed": 0.49, "slope": -0.01},
+         "n_steps": 100, "duration_s": 60.0,
+         "judge_report": {
+             "n_images": 4, "n_failed": 3,
+             "mean_overall": 8.0, "mean_prompt_adherence": 8.0,
+             "mean_visual_quality": 8.0, "mean_artifact_free": 8.0,
+             "judgements": [
+                 {"image": "a.png", "error": "ValueError: no JSON scores in response text: 'Got it,...'"},
+                 {"image": "b.png", "error": "ValueError: no JSON scores in response text: 'First, prompt...'"},
+                 {"image": "c.png", "error": None},
+                 {"image": "d.png", "error": "URLError: <urlopen error [Errno 111] Connection refused>"},
+             ],
+         }},
+    ])
+    snap = build_snapshot(out, total_runs_target=1, judge_configured=True)
+    assert "failure breakdown" in snap.judge_summary
+    # Dominant bucket comes first
+    assert "model returned prose, not JSON" in snap.judge_summary
+    assert "LMStudio unreachable" in snap.judge_summary
+    # Hint targets the dominant bucket
+    assert "non-thinking VLM" in snap.judge_summary or "max_tokens" in snap.judge_summary
+
+
 def test_build_snapshot_judge_summary_killed_before_first_score(tmp_path: Path):
     """Same case but with a row that timed out before scoring (judge_report=None)."""
     out = tmp_path / "session"

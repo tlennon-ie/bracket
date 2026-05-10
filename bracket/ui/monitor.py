@@ -220,6 +220,51 @@ def setup_status(ledger_rows: list[dict]) -> str:
     return "errored"
 
 
+def _summarise_judge_failures(rows_with_judge: list[dict]) -> str:
+    """Human-readable breakdown of WHY judgements failed.
+
+    Bracket records a per-image error string on every failed judgement
+    (``judge_report.judgements[i].error``). This bins them into a few
+    actionable categories so the user gets one suggestion line instead
+    of staring at "(N failed)" with no context.
+    """
+
+    buckets: dict[str, int] = {}
+    for r in rows_with_judge:
+        for j in (r.get("judge_report") or {}).get("judgements") or []:
+            err = j.get("error")
+            if not err:
+                continue
+            err_s = str(err)
+            if "no JSON scores" in err_s:
+                buckets["model returned prose, not JSON"] = buckets.get(
+                    "model returned prose, not JSON", 0,
+                ) + 1
+            elif "non-JSON response" in err_s or "empty choices" in err_s:
+                buckets["LMStudio response malformed"] = buckets.get(
+                    "LMStudio response malformed", 0,
+                ) + 1
+            elif "URLError" in err_s or "timeout" in err_s.lower() or "ConnectionError" in err_s:
+                buckets["LMStudio unreachable"] = buckets.get(
+                    "LMStudio unreachable", 0,
+                ) + 1
+            else:
+                buckets["other"] = buckets.get("other", 0) + 1
+    if not buckets:
+        return ""
+    parts = ", ".join(f"{n} {label}" for label, n in sorted(buckets.items(), key=lambda kv: -kv[1]))
+    hint = ""
+    if buckets.get("model returned prose, not JSON"):
+        hint = (
+            " — try a non-thinking VLM (Qwen2.5-VL-7B, MiniCPM-V) or raise "
+            "max_tokens; LMStudio's structured-output mode (json_schema) is "
+            "already enabled by default."
+        )
+    elif buckets.get("LMStudio unreachable"):
+        hint = " — confirm LMStudio is running and the configured base_url + port are reachable."
+    return f"   ↳ failure breakdown: {parts}.{hint}"
+
+
 def build_snapshot(
     output_dir: Path,
     *,
@@ -286,8 +331,11 @@ def build_snapshot(
         avg = sum(means) / len(means) if means else 0.0
         judge_summary = (
             f"**Judge:** ✓ LMStudio · {len(rows_with_judge)}/{len(training_rows)} runs scored · "
-            f"{n_imgs} images judged ({n_failed} failed) · mean visual score **{avg:.2f}/10**"
+            f"{n_imgs} images judged ({n_failed} failed) · mean visual score **{avg:.2f}/10** "
+            f"(over {n_imgs - n_failed} successful)"
         )
+        if n_failed:
+            judge_summary += "\n" + _summarise_judge_failures(rows_with_judge)
     elif judge_configured:
         # Configured but no scored row yet — distinct from "not configured".
         judge_summary = (

@@ -253,3 +253,24 @@ def test_lmstudio_resolve_lms_binary_respects_env(monkeypatch, tmp_path):
     binary.write_text("")
     monkeypatch.setenv("BRACKET_LMS_BIN", str(binary))
     assert LMStudioJudge._resolve_lms_binary() == str(binary)
+
+
+def test_lmstudio_payload_includes_json_schema_response_format():
+    """The default payload must request structured JSON output so the
+    underlying llama.cpp grammar prevents the model from rambling."""
+    j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm"))
+    payload = j._build_payload("data:image/png;base64,xxx", "a cat")
+    assert "response_format" in payload
+    rf = payload["response_format"]
+    assert rf["type"] == "json_schema"
+    schema = rf["json_schema"]["schema"]
+    assert schema["required"] == ["prompt_adherence", "visual_quality", "artifact_free"]
+    assert schema["properties"]["prompt_adherence"]["maximum"] == 10
+    assert payload["max_tokens"] >= 2048, "thinking models need headroom for preamble + JSON"
+
+
+def test_lmstudio_payload_omits_response_format_when_disabled():
+    """Older LMStudio builds may reject response_format; opt-out exists."""
+    j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm", use_json_schema=False))
+    payload = j._build_payload("data:image/png;base64,xxx", "a cat")
+    assert "response_format" not in payload

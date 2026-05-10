@@ -58,12 +58,22 @@ class LMStudioJudgeConfig:
     base_url: str = "http://localhost:1234/v1"
     model: str = "qwen3-vl-8b-thinking-abliterated"
     timeout_s: float = 120.0
-    max_tokens: int = 1024
+    # Bumped from 1024 — thinking models burn 800+ tokens on preamble
+    # before the JSON, and a truncated response was the dominant
+    # parse-failure mode in real sessions.
+    max_tokens: int = 2048
     temperature: float = 0.0
     prompt_template: str = DEFAULT_PROMPT_TEMPLATE
     # Some models output 0-1 or 0-5; if max observed score in a parsed object
     # is <= this, we'll rescale to 0-10. Set None to disable rescaling.
     autoscale_threshold: Optional[float] = 5.0
+    # OpenAI-compatible structured-output mode. LMStudio supports
+    # `response_format={"type": "json_schema", ...}` and constrains the
+    # underlying llama.cpp grammar to emit only valid JSON matching the
+    # schema. Eliminates the "Got it, let's evaluate..." rambling that
+    # caused 30-50% of judgements to fail with thinking-style models.
+    # Set False if the loaded model rejects the parameter (older builds).
+    use_json_schema: bool = True
 
 
 class LMStudioJudge(SampleJudge):
@@ -77,9 +87,23 @@ class LMStudioJudge(SampleJudge):
         b64 = base64.b64encode(data).decode("ascii")
         return f"data:image/{mime};base64,{b64}"
 
+    # JSON schema for the three required score fields. Sent to LMStudio so
+    # the underlying llama.cpp grammar constrains output to a parsable
+    # object — no more truncated prose preambles.
+    _JUDGE_JSON_SCHEMA: dict = {
+        "type": "object",
+        "properties": {
+            "prompt_adherence": {"type": "number", "minimum": 0, "maximum": 10},
+            "visual_quality":   {"type": "number", "minimum": 0, "maximum": 10},
+            "artifact_free":    {"type": "number", "minimum": 0, "maximum": 10},
+        },
+        "required": ["prompt_adherence", "visual_quality", "artifact_free"],
+        "additionalProperties": False,
+    }
+
     def _build_payload(self, image_data_url: str, prompt: str) -> dict:
         instruction = self.config.prompt_template.format(prompt=prompt)
-        return {
+        payload: dict = {
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
@@ -93,6 +117,18 @@ class LMStudioJudge(SampleJudge):
                 },
             ],
         }
+        if self.config.use_json_schema:
+            # OpenAI-compatible structured-output spec; LMStudio applies it as
+            # a llama.cpp grammar so token sampling is forced into the schema.
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "image_judgement",
+                    "strict": True,
+                    "schema": self._JUDGE_JSON_SCHEMA,
+                },
+            }
+        return payload
 
     def _post(self, payload: dict) -> str:
         url = self.config.base_url.rstrip("/") + "/chat/completions"
