@@ -34,6 +34,31 @@ export function formatStep(step: number | null | undefined): string {
 	return step.toLocaleString();
 }
 
+export function formatStepsPerSec(value: number | null | undefined): string {
+	if (value === null || value === undefined || Number.isNaN(value)) return "—";
+	if (value <= 0) return "—";
+	// Below 1 it/s, the inverse (s/it) is more readable — matches what
+	// musubi-tuner and sd-scripts print on stdout.
+	if (value < 1) return `${(1 / value).toFixed(2)} s/it`;
+	return `${value.toFixed(2)} it/s`;
+}
+
+export function formatEta(
+	stepsRemaining: number | null | undefined,
+	stepsPerSec: number | null | undefined,
+): string {
+	if (
+		stepsRemaining === null ||
+		stepsRemaining === undefined ||
+		stepsPerSec === null ||
+		stepsPerSec === undefined ||
+		stepsPerSec <= 0
+	) {
+		return "—";
+	}
+	return formatDuration(stepsRemaining / stepsPerSec);
+}
+
 export function shortenRunId(runId: string, maxLen = 18): string {
 	if (runId.length <= maxLen) return runId;
 	return `${runId.slice(0, 6)}…${runId.slice(-8)}`;

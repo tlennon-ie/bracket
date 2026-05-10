@@ -184,6 +184,7 @@ def _build_snapshot_payload(
         out_dir,
         total_runs_target=sess_snap.total_runs_target,
         ema_alpha=ema_alpha,
+        judge_configured=sess_snap.judge_configured,
     )
     return MonitorSnapshotOut(
         session_status=sess_snap.status,
@@ -202,6 +203,7 @@ def _build_snapshot_payload(
         setup_status=snap.setup_status,
         judge_summary=snap.judge_summary,
         session_done=bool(snap.session_done),
+        current_steps_per_sec=snap.current_steps_per_sec,
         ts=time.time(),
     )
 
@@ -355,7 +357,15 @@ def _start_session_impl(
             )
 
     total_target = (1 + int(req.budget)) * int(req.seeds)
-    session.start(run_fn, finals_fn=finals_fn, output_dir=out, total_runs_target=total_target)
+    # Judge intent flag — drives the "configured but no scored row yet"
+    # snapshot message so users who Stop early don't see a misleading
+    # "not configured" warning.
+    judge_configured = judge is not None and sp is not None
+    session.start(
+        run_fn, finals_fn=finals_fn, output_dir=out,
+        total_runs_target=total_target,
+        judge_configured=judge_configured,
+    )
 
     return StartSessionResponse(
         status="started",

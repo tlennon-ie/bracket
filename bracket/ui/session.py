@@ -41,6 +41,10 @@ class SessionState:
     total_runs_target: int = 0
     result: Optional[OrchestrationResult] = None
     finals_started: bool = False
+    # True when start() was called with a judge wired up (LMStudio +
+    # sample_prompts). Persists for the session's lifetime so a Stop
+    # before the first scored run still surfaces the right message.
+    judge_configured: bool = False
 
     def elapsed_s(self) -> float:
         if self.started_at is None:
@@ -129,6 +133,7 @@ class OrchestrationSession:
         finals_fn: Optional[Callable[[OrchestrationResult], None]] = None,
         output_dir: Path,
         total_runs_target: int,
+        judge_configured: bool = False,
     ) -> None:
         if self.is_running():
             raise RuntimeError("session already running")
@@ -138,6 +143,7 @@ class OrchestrationSession:
             self.state = SessionState(
                 status="running", started_at=time.time(),
                 output_dir=Path(output_dir), total_runs_target=total_runs_target,
+                judge_configured=judge_configured,
             )
             handler = _StateLogHandler(self.state, self._lock)
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -189,4 +195,5 @@ class OrchestrationSession:
                 total_runs_target=self.state.total_runs_target,
                 result=self.state.result,
                 finals_started=self.state.finals_started,
+                judge_configured=self.state.judge_configured,
             )

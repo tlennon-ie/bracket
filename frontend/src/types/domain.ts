@@ -80,6 +80,7 @@ export interface MonitorSnapshot {
 	setup_status: SetupStatus;
 	judge_summary: string;
 	session_done: boolean;
+	current_steps_per_sec: number | null;
 	ts: number;
 }
 

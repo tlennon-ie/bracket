@@ -197,6 +197,9 @@ class MonitorSnapshotOut(_Base):
     setup_status: str = "not started"
     judge_summary: str = ""
     session_done: bool = False
+    # Average iterations-per-second for the current run (None until we have
+    # at least 2 tfevents samples to compute a delta).
+    current_steps_per_sec: Optional[float] = None
 
     # WS-only metadata; harmless on REST.
     ts: float = 0.0

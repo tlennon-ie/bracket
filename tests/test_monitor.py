@@ -137,6 +137,55 @@ def test_load_loss_series_returns_smoothed_and_raw(tmp_path: Path):
     assert len(series.steps) == 50
     assert len(series.raw) == 50
     assert len(series.smoothed) == 50
+    assert len(series.wall_times) == 50
+    # wall_times must be monotonic — used to compute it/s
+    for a, b in zip(series.wall_times, series.wall_times[1:]):
+        assert b >= a
+
+
+def test_compute_steps_per_sec_returns_average_rate():
+    from bracket.ui.monitor import LossSeries, compute_steps_per_sec
+
+    # 10 steps over 5 seconds = 2 it/s
+    s = LossSeries(
+        steps=list(range(10)),
+        raw=[0.5] * 10,
+        smoothed=[0.5] * 10,
+        wall_times=[i * 0.5 for i in range(10)],
+    )
+    rate = compute_steps_per_sec(s)
+    assert rate is not None
+    assert abs(rate - 2.0) < 0.01
+
+
+def test_compute_steps_per_sec_returns_none_without_wall_times():
+    from bracket.ui.monitor import LossSeries, compute_steps_per_sec
+
+    s = LossSeries(steps=[0, 1, 2], raw=[0.5] * 3, smoothed=[0.5] * 3)
+    assert compute_steps_per_sec(s) is None
+
+
+def test_compute_steps_per_sec_returns_none_for_single_sample():
+    from bracket.ui.monitor import LossSeries, compute_steps_per_sec
+
+    s = LossSeries(
+        steps=[0], raw=[0.5], smoothed=[0.5], wall_times=[100.0],
+    )
+    assert compute_steps_per_sec(s) is None
+
+
+def test_compute_steps_per_sec_handles_zero_dt():
+    """If somehow all sampled wall_times are identical (e.g. tfevents bug),
+    we must return None rather than divide by zero."""
+    from bracket.ui.monitor import LossSeries, compute_steps_per_sec
+
+    s = LossSeries(
+        steps=[0, 1, 2],
+        raw=[0.5, 0.5, 0.5],
+        smoothed=[0.5, 0.5, 0.5],
+        wall_times=[100.0, 100.0, 100.0],
+    )
+    assert compute_steps_per_sec(s) is None
 
 
 def test_parse_max_steps_from_log(tmp_path: Path):
@@ -235,6 +284,34 @@ def test_build_snapshot_judge_summary_when_active(tmp_path: Path):
     assert "LMStudio" in snap.judge_summary
     assert "10 images" in snap.judge_summary
     assert "8.50" in snap.judge_summary
+
+
+def test_build_snapshot_judge_summary_when_configured_but_no_scored_row(tmp_path: Path):
+    """User configured the judge but stopped before any run finished.
+    Must NOT fall back to the misleading "not configured" message."""
+    out = tmp_path / "session"
+    (out / "runs").mkdir(parents=True)
+    _write_ledger(out / "ledger.jsonl", [
+        {"role": "setup", "run_id": "setup-000", "exit_code": 0},
+    ])
+    snap = build_snapshot(out, total_runs_target=1, judge_configured=True)
+    assert "configured" in snap.judge_summary
+    assert "not configured" not in snap.judge_summary
+    assert "waiting for the first run" in snap.judge_summary
+
+
+def test_build_snapshot_judge_summary_killed_before_first_score(tmp_path: Path):
+    """Same case but with a row that timed out before scoring (judge_report=None)."""
+    out = tmp_path / "session"
+    (out / "runs").mkdir(parents=True)
+    _write_ledger(out / "ledger.jsonl", [
+        {"role": "baseline", "run_id": "baseline-000-s0", "score": None,
+         "score_components": {}, "n_steps": 3, "duration_s": 1800.0,
+         "judge_report": None, "killed_by_timeout": True},
+    ])
+    snap = build_snapshot(out, total_runs_target=1, judge_configured=True)
+    assert "not configured" not in snap.judge_summary
+    assert "configured" in snap.judge_summary
 
 
 def test_score_history_filters_setup_rows(tmp_path: Path):

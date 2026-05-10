@@ -3,6 +3,7 @@ import { LossChart } from "@/components/monitor/LossChart";
 import { ProgressBar } from "@/components/monitor/ProgressBar";
 import { ScoreHistoryTable } from "@/components/monitor/ScoreHistoryTable";
 import { SmoothingSlider } from "@/components/monitor/SmoothingSlider";
+import { TrainingStats } from "@/components/monitor/TrainingStats";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -149,7 +150,13 @@ function MonitorPage() {
 					</div>
 					<SmoothingSlider />
 				</CardHeader>
-				<CardContent>
+				<CardContent className="flex flex-col gap-4">
+					<TrainingStats
+						stepsDone={snapshot?.current_run_steps_done ?? null}
+						maxSteps={snapshot?.current_run_max_steps ?? null}
+						stepsPerSec={snapshot?.current_steps_per_sec ?? null}
+						elapsedS={snapshot?.elapsed_s ?? 0}
+					/>
 					<LossChart
 						series={snapshot?.current_loss ?? null}
 						isLoading={isLoading}

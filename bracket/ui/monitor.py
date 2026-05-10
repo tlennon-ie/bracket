@@ -43,6 +43,10 @@ class LossSeries:
     steps: list[int]
     raw: list[float]
     smoothed: list[float]
+    # Per-step wall-clock from tfevents (seconds since epoch). Same length
+    # as `steps` when populated. Optional for backwards compatibility with
+    # older callers that build the series by hand.
+    wall_times: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -59,6 +63,10 @@ class MonitorSnapshot:
     setup_status: str            # "not started" | "running" | "done"
     judge_summary: str = ""      # plain-English judge status, e.g. "not configured"
     session_done: bool = False   # True when no run is in-flight and target reached
+    # Average iterations-per-second over the last ~10 step deltas of the
+    # currently-running run. None when there's nothing in-flight or we
+    # don't yet have enough samples to compute a rate.
+    current_steps_per_sec: Optional[float] = None
 
 
 def read_ledger(ledger_path: Path) -> list[dict]:
@@ -117,17 +125,45 @@ def load_loss_series(tfevents: Path, *, ema_alpha: float = 0.05) -> Optional[Los
     steps: list[int] = []
     raw: list[float] = []
     smoothed: list[float] = []
+    wall_times: list[float] = []
 
     def _on_frame(frame) -> None:
         steps.append(frame.step)
         raw.append(frame.raw_loss)
         smoothed.append(frame.smoothed_loss)
+        wall_times.append(frame.wall_time)
 
     tail = TFEventsTail(event_path=str(tfevents), on_frame=_on_frame, ema_alpha=ema_alpha)
     n = tail.drain_once()
     if n == 0:
         return None
-    return LossSeries(steps=steps, raw=raw, smoothed=smoothed)
+    return LossSeries(steps=steps, raw=raw, smoothed=smoothed, wall_times=wall_times)
+
+
+def compute_steps_per_sec(series: LossSeries, *, window: int = 10) -> Optional[float]:
+    """Average it/s over the last ``window`` step deltas in the series.
+
+    Returns ``None`` when:
+      - we have fewer than 2 samples (no delta to measure)
+      - all samples in the window share the same wall-clock (would divide by zero)
+      - wall_times wasn't populated by the source
+
+    Computed from tfevents wall_time, not request time, so the result is
+    accurate even when the snapshot is built well after the trainer wrote
+    its last batch.
+    """
+
+    wts = series.wall_times
+    steps = series.steps
+    if not wts or len(wts) < 2 or len(wts) != len(steps):
+        return None
+    n = min(window, len(wts) - 1)
+    # Last (n+1) samples → n deltas.
+    dt = wts[-1] - wts[-1 - n]
+    dsteps = steps[-1] - steps[-1 - n]
+    if dt <= 0 or dsteps <= 0:
+        return None
+    return float(dsteps) / float(dt)
 
 
 def parse_max_steps_from_log(run_dir: Path) -> Optional[int]:
@@ -189,6 +225,7 @@ def build_snapshot(
     *,
     total_runs_target: int = 0,
     ema_alpha: float = 0.05,
+    judge_configured: bool = False,
 ) -> MonitorSnapshot:
     output_dir = Path(output_dir)
     ledger_path = output_dir / "ledger.jsonl"
@@ -203,6 +240,7 @@ def build_snapshot(
     cur_max_steps: Optional[int] = None
     cur_loss: Optional[LossSeries] = None
     cur_run_id: Optional[str] = None
+    cur_steps_per_sec: Optional[float] = None
     if current_run is not None:
         cur_run_id = current_run.name
         cur_max_steps = parse_max_steps_from_log(current_run)
@@ -211,6 +249,7 @@ def build_snapshot(
             cur_loss = load_loss_series(tfe, ema_alpha=ema_alpha)
             if cur_loss is not None and cur_loss.steps:
                 cur_steps_done = cur_loss.steps[-1]
+                cur_steps_per_sec = compute_steps_per_sec(cur_loss)
 
     setup = setup_status(rows)
     if setup == "running":
@@ -227,19 +266,20 @@ def build_snapshot(
     else:
         status_line = "_idle / no session yet_"
 
-    # Judge state — surface explicitly so users can tell whether VLM scoring
-    # actually ran. Looks at completed training rows: if any has a populated
-    # judge_report, the judge ran; otherwise it's clearly off.
+    # Judge state. We have two signals:
+    #   1. INTENT — `judge_configured`, which the API passes through from
+    #      the start-session request. True means the user picked LMStudio +
+    #      gave a sample-prompts file.
+    #   2. EVIDENCE — at least one ledger row has a populated `judge_report`.
+    #      Means the judge has actually scored a sample.
+    # Show the right message for the cross-product so a user who configured
+    # the judge but stopped before any run finished doesn't see a misleading
+    # "not configured" warning.
     training_rows = [r for r in rows if r.get("role") in _TRAINING_ROLES]
     rows_with_judge = [r for r in training_rows if r.get("judge_report")]
-    if not training_rows:
+    if not training_rows and not judge_configured:
         judge_summary = ""
-    elif not rows_with_judge:
-        judge_summary = (
-            "**Judge:** ❌ not configured — runs scored on training loss only. "
-            "Enable LMStudio + sample_prompts on the Setup tab to score sample images."
-        )
-    else:
+    elif rows_with_judge:
         n_imgs = sum(int(r["judge_report"].get("n_images", 0)) for r in rows_with_judge)
         n_failed = sum(int(r["judge_report"].get("n_failed", 0)) for r in rows_with_judge)
         means = [float(r["judge_report"].get("mean_overall", 0.0)) for r in rows_with_judge]
@@ -247,6 +287,17 @@ def build_snapshot(
         judge_summary = (
             f"**Judge:** ✓ LMStudio · {len(rows_with_judge)}/{len(training_rows)} runs scored · "
             f"{n_imgs} images judged ({n_failed} failed) · mean visual score **{avg:.2f}/10**"
+        )
+    elif judge_configured:
+        # Configured but no scored row yet — distinct from "not configured".
+        judge_summary = (
+            "**Judge:** ✓ LMStudio configured — waiting for the first run to "
+            "complete so samples can be scored."
+        )
+    else:
+        judge_summary = (
+            "**Judge:** ❌ not configured — runs scored on training loss only. "
+            "Enable LMStudio + sample_prompts on the Setup tab to score sample images."
         )
 
     # session_done: training target reached AND no run currently in-flight.
@@ -268,6 +319,7 @@ def build_snapshot(
         setup_status=setup,
         judge_summary=judge_summary,
         session_done=session_done,
+        current_steps_per_sec=cur_steps_per_sec,
     )
 
 
