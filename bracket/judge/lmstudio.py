@@ -74,6 +74,13 @@ class LMStudioJudgeConfig:
     # caused 30-50% of judgements to fail with thinking-style models.
     # Set False if the loaded model rejects the parameter (older builds).
     use_json_schema: bool = True
+    # Forwarded to LMStudio as `chat_template_kwargs` and into the Jinja
+    # chat template at render time. Qwen3-class templates honour
+    # `{% set enable_thinking = ... %}` — set False to skip the
+    # <think>...</think> preamble entirely (much cheaper for thinking
+    # VLMs). None = leave the kwarg unset and use whatever default the
+    # template ships with.
+    enable_thinking: Optional[bool] = None
 
 
 class LMStudioJudge(SampleJudge):
@@ -127,6 +134,17 @@ class LMStudioJudge(SampleJudge):
                     "strict": True,
                     "schema": self._JUDGE_JSON_SCHEMA,
                 },
+            }
+        if self.config.enable_thinking is not None:
+            # LMStudio forwards `chat_template_kwargs` into the Jinja chat
+            # template renderer. Qwen3-class templates check
+            # `enable_thinking` at render time — False skips emitting the
+            # `<think>...</think>` block, saving ~40% of latency on a
+            # thinking-style VLM. Templates without that variable just
+            # ignore the kwarg, so this is safe to send unconditionally
+            # when the user opts in.
+            payload["chat_template_kwargs"] = {
+                "enable_thinking": bool(self.config.enable_thinking),
             }
         return payload
 

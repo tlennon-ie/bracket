@@ -29,6 +29,7 @@ const DEFAULTS: StartSessionRequest = {
 	judge_model: "qwen3-vl-8b-thinking-abliterated",
 	judge_loss_weight: 0.3,
 	judge_sample_weight: 0.7,
+	judge_disable_thinking: false,
 	preset_field_values: {},
 };
 

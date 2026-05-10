@@ -315,8 +315,13 @@ def _start_session_impl(
 
     judge = None
     if req.judge_method == "lmstudio" and sp is not None:
+        # `judge_disable_thinking=True` translates to enable_thinking=False
+        # in the chat_template_kwargs sent to LMStudio. Leave None when the
+        # user wants the model's default behaviour.
+        enable_thinking = False if req.judge_disable_thinking else None
         judge = LMStudioJudge(LMStudioJudgeConfig(
             base_url=req.judge_base_url, model=req.judge_model,
+            enable_thinking=enable_thinking,
         ))
 
     if req.search_method == "optuna":

@@ -2,6 +2,7 @@ import { DatasetTomlDrop } from "@/components/setup/DatasetTomlDrop";
 import { DynamicFieldList } from "@/components/setup/DynamicFieldList";
 import { ModelFamilyPicker } from "@/components/setup/ModelFamilyPicker";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Card,
 	CardContent,
@@ -330,6 +331,33 @@ function SetupPage() {
 							</div>
 						</FieldRow>
 					</div>
+					<Label className="flex items-start gap-2.5 normal-case tracking-normal cursor-pointer">
+						<Checkbox
+							id="judge_disable_thinking"
+							checked={config.judge_disable_thinking}
+							disabled={config.judge_method === "none"}
+							onCheckedChange={(v) =>
+								setField("judge_disable_thinking", v === true)
+							}
+							className="mt-0.5"
+						/>
+						<div className="flex flex-col gap-0.5">
+							<span className="text-sm">Disable thinking mode</span>
+							<span className="text-xs text-muted-foreground">
+								Sends{" "}
+								<code className="font-mono-tight text-[11px]">
+									chat_template_kwargs={"{"}enable_thinking: false{"}"}
+								</code>{" "}
+								to LM Studio. Skips the{" "}
+								<code className="font-mono-tight text-[11px]">
+									&lt;think&gt;
+								</code>{" "}
+								preamble on Qwen3-class VLMs — roughly halves judge latency
+								and eliminates the prose-overflow failure mode. Templates
+								without that variable ignore it, so it's safe to leave on.
+							</span>
+						</div>
+					</Label>
 				</CardContent>
 			</Card>
 		</div>

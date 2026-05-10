@@ -274,3 +274,27 @@ def test_lmstudio_payload_omits_response_format_when_disabled():
     j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm", use_json_schema=False))
     payload = j._build_payload("data:image/png;base64,xxx", "a cat")
     assert "response_format" not in payload
+
+
+def test_lmstudio_payload_omits_chat_template_kwargs_by_default():
+    """Default is to leave the chat template alone — only opt-in."""
+    j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm"))
+    payload = j._build_payload("data:image/png;base64,xxx", "a cat")
+    assert "chat_template_kwargs" not in payload
+
+
+def test_lmstudio_payload_sets_enable_thinking_false_when_opted_in():
+    """The disable-thinking toggle must translate into the OpenAI-spec
+    chat_template_kwargs field that LMStudio forwards to the Jinja
+    chat template renderer."""
+    j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm", enable_thinking=False))
+    payload = j._build_payload("data:image/png;base64,xxx", "a cat")
+    assert payload.get("chat_template_kwargs") == {"enable_thinking": False}
+
+
+def test_lmstudio_payload_passes_enable_thinking_true_through():
+    """Symmetric: explicit True must round-trip too, in case a user wants
+    to force-enable thinking on a model whose template defaults to off."""
+    j = LMStudioJudge(LMStudioJudgeConfig(model="any-vlm", enable_thinking=True))
+    payload = j._build_payload("data:image/png;base64,xxx", "a cat")
+    assert payload.get("chat_template_kwargs") == {"enable_thinking": True}

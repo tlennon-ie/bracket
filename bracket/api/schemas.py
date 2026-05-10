@@ -119,6 +119,12 @@ class StartSessionRequest(_Base):
     judge_model: str = "qwen3-vl-8b-thinking-abliterated"
     judge_loss_weight: float = 0.3
     judge_sample_weight: float = 0.7
+    # When True, send `chat_template_kwargs={"enable_thinking": false}`
+    # to LMStudio so Qwen3-class VLMs skip the <think>...</think>
+    # preamble. Roughly halves judge latency on thinking models. None
+    # equivalent (= leave default) is encoded as False here so the field
+    # survives JSON round-trip cleanly.
+    judge_disable_thinking: bool = False
 
     # Preset-specific values, keyed by FieldSpec.name
     preset_field_values: dict[str, str] = Field(default_factory=dict)

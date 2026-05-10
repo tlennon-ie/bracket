@@ -153,6 +153,7 @@ export interface StartSessionRequest {
 	judge_model: string;
 	judge_loss_weight: number;
 	judge_sample_weight: number;
+	judge_disable_thinking: boolean;
 	preset_field_values: Record<string, string>;
 }
 
