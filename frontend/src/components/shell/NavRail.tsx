@@ -17,12 +17,15 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	FileText,
+	Github,
 	Play,
 	Settings2,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
+
+const GITHUB_REPO_URL = "https://github.com/tlennon-ie/bracket";
 
 interface NavItem {
 	to: string;
@@ -181,6 +184,27 @@ export function NavRail() {
 					<div
 						className={cn("flex items-center gap-2", collapsed && "flex-col")}
 					>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									variant="ghost"
+									size="icon"
+									asChild
+									aria-label="Open Bracket on GitHub"
+								>
+									<a
+										href={GITHUB_REPO_URL}
+										target="_blank"
+										rel="noopener noreferrer"
+									>
+										<Github className="h-4 w-4" />
+									</a>
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side={collapsed ? "right" : "top"}>
+								<span>GitHub repo</span>
+							</TooltipContent>
+						</Tooltip>
 						<ThemeToggle collapsed={collapsed} />
 						<Button
 							variant="ghost"

@@ -60,6 +60,8 @@ from bracket.api.schemas import (
     StartSessionResponse,
     StopSessionResponse,
     TrainingTypeOut,
+    TriggerUpdateOut,
+    UpdateStatusOut,
 )
 from bracket.dataset.subset import DatasetSubsetSpec, build_subset
 from bracket.judge.lmstudio import LMStudioJudge, LMStudioJudgeConfig
@@ -76,6 +78,7 @@ from bracket.registry import (
     training_types_for,
 )
 from bracket.search.controller import RandomSearch, SearchController
+from bracket import updater as bracket_updater
 from bracket.search.optuna_search import OptunaTPESearch
 from bracket.ui.monitor import (
     MonitorSnapshot,
@@ -616,6 +619,59 @@ def _make_router() -> APIRouter:
         # cross-mark; otherwise it reports counts.
         configured = bool(summary) and "not configured" not in summary
         return JudgeStatusOut(configured=configured, summary=summary)
+
+    # ── updater ──
+
+    @router.get("/update/check", response_model=UpdateStatusOut)
+    def update_check(force: bool = Query(default=False)) -> UpdateStatusOut:
+        """Compare the running version against the latest GitHub release.
+
+        Cached for 30 minutes to avoid hammering GitHub's anonymous rate
+        limit. The frontend polls this on mount and surfaces a toast when
+        ``update_available`` is True.
+        """
+
+        result = bracket_updater.check_for_update(force=force)
+        return UpdateStatusOut(
+            current_version=result.current_version,
+            latest_version=result.latest_version,
+            update_available=result.update_available,
+            release_url=result.release_url,
+            release_notes=result.release_notes,
+            checked_at=result.checked_at,
+            error=result.error,
+        )
+
+    @router.post("/update/apply", response_model=TriggerUpdateOut)
+    def update_apply() -> TriggerUpdateOut:
+        """Spawn the platform-appropriate update script and return.
+
+        The script does ``git pull``, rebuilds the venv + frontend, and
+        re-launches the server. It runs detached, so this endpoint returns
+        successfully even though the API process will be replaced shortly
+        after. The React frontend should expect the WebSocket to drop and
+        reconnect once the new server is up.
+        """
+
+        try:
+            result = bracket_updater.trigger_update()
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(e),
+            ) from e
+        except OSError as e:
+            logger.exception("update spawn failed")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to spawn update script: {type(e).__name__}: {e}",
+            ) from e
+        return TriggerUpdateOut(
+            spawned=True,
+            message="Update script started. The server will restart shortly.",
+            script=result.get("script"),
+            log_path=result.get("log_path"),
+        )
 
     return router
 

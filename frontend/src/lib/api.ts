@@ -16,6 +16,8 @@ import type {
 	StartSessionResponse,
 	StopSessionResponse,
 	TrainingType,
+	TriggerUpdateResponse,
+	UpdateStatus,
 } from "@/types/domain";
 import { toast } from "sonner";
 
@@ -131,6 +133,16 @@ export const api = {
 
 	// Judge.
 	getJudgeStatus: (): Promise<JudgeStatus> => request("/api/judge/status"),
+
+	// Updater.
+	checkForUpdate: (force = false): Promise<UpdateStatus> =>
+		request(
+			`/api/update/check${force ? "?force=true" : ""}`,
+			{},
+			{ silent: true },
+		),
+	applyUpdate: (): Promise<TriggerUpdateResponse> =>
+		request("/api/update/apply", { method: "POST" }),
 };
 
 export type ApiClient = typeof api;

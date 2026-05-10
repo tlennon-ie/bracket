@@ -5,17 +5,23 @@
 #   2. Creates a .venv next to the project.
 #   3. Detects GPU (nvidia-smi) and selects a matching PyTorch wheel.
 #   4. Installs Bracket + its dependencies.
-#   5. Clones the trainers Bracket drives (sd-scripts, musubi-tuner) into
-#      $env:LOCALAPPDATA\bracket\trainers and creates a shared trainer venv.
-#   6. Writes a .env with sensible defaults so the UI lands ready to run.
+#   5. Builds the React frontend (frontend\dist) if Node.js/npm is present.
+#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner) as
+#      pinned git submodules under vendor\ and creates a shared trainer
+#      venv at vendor\venv. Bumping a trainer is a maintainer commit; see
+#      docs\UPDATING_TRAINERS.md.
+#   7. Writes a .env with sensible defaults so the UI lands ready to run.
 #
 # Re-run is safe -- every step is idempotent.
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
-$TrainersRoot = if ($env:BRACKET_TRAINERS_ROOT) { $env:BRACKET_TRAINERS_ROOT } else { Join-Path $env:LOCALAPPDATA "bracket\trainers" }
+$VendorRoot = Join-Path $RepoRoot "vendor"
 $VenvDir = Join-Path $RepoRoot ".venv"
-$TrainerVenv = Join-Path $TrainersRoot "venv"
+$TrainerVenv = Join-Path $VendorRoot "venv"
+# Legacy compatibility: if BRACKET_TRAINERS_ROOT was set by an older install,
+# we still write it through to .env so existing setups keep working.
+$LegacyTrainersRoot = if ($env:BRACKET_TRAINERS_ROOT) { $env:BRACKET_TRAINERS_ROOT } else { $null }
 
 function Write-Step($msg)  { Write-Host "==> $msg" -ForegroundColor Blue }
 function Write-Ok($msg)    { Write-Host "[OK] $msg" -ForegroundColor Green }
@@ -75,24 +81,49 @@ Write-Step "Installing Bracket (editable + dev)"
 & $venvPython -m pip install --quiet -e ".[dev]"
 Write-Ok "Bracket installed"
 
-# --- 5. Trainers + trainer venv ---------------------------------------
-Write-Step "Setting up trainers at $TrainersRoot"
-New-Item -ItemType Directory -Force -Path $TrainersRoot | Out-Null
-$musubiDir = Join-Path $TrainersRoot "musubi-tuner"
-$sdScriptsDir = Join-Path $musubiDir "sd-scripts"
+# --- 5. Frontend build ------------------------------------------------
+Write-Step "Building React frontend"
+$frontendDir = Join-Path $RepoRoot "frontend"
+if (-not (Test-Path $frontendDir)) {
+    Write-Warn "frontend\ directory missing -- skipping UI build"
+} else {
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        Write-Warn "npm not found. Install Node.js 20+ from https://nodejs.org/ then re-run this installer to build the React UI. (API endpoints still work without it.)"
+    } else {
+        $nodeVersion = & node --version 2>$null
+        Write-Ok "Node $nodeVersion detected"
+        Push-Location $frontendDir
+        try {
+            $lockfile = Join-Path $frontendDir "package-lock.json"
+            if (Test-Path $lockfile) {
+                & npm ci --no-audit --no-fund --loglevel=error
+            } else {
+                & npm install --no-audit --no-fund --loglevel=error
+            }
+            if ($LASTEXITCODE -ne 0) { Write-FailExit "npm install failed" }
+            & npm run build
+            if ($LASTEXITCODE -ne 0) { Write-FailExit "npm run build failed" }
+            Write-Ok "Frontend built (frontend\dist)"
+        } finally {
+            Pop-Location
+        }
+    }
+}
 
-if (-not (Test-Path $musubiDir)) {
-    git clone --depth=1 https://github.com/kohya-ss/musubi-tuner $musubiDir
-    Write-Ok "Cloned musubi-tuner"
-} else {
-    Write-Ok "musubi-tuner already present"
-}
-if (-not (Test-Path $sdScriptsDir)) {
-    git clone --depth=1 https://github.com/kohya-ss/sd-scripts $sdScriptsDir
-    Write-Ok "Cloned sd-scripts"
-} else {
-    Write-Ok "sd-scripts already present"
-}
+# --- 6. Trainers (git submodules) + trainer venv ----------------------
+Write-Step "Syncing trainer submodules under vendor\"
+$musubiDir = Join-Path $VendorRoot "musubi-tuner"
+$sdScriptsDir = Join-Path $VendorRoot "sd-scripts"
+
+# `git submodule update --init` is idempotent. Pinning lives in .gitmodules
+# at the repo root -- bumping a trainer version is a maintainer commit, not
+# something this installer does. See docs\UPDATING_TRAINERS.md.
+& git submodule update --init --recursive
+if ($LASTEXITCODE -ne 0) { Write-FailExit "git submodule update failed" }
+if (-not (Test-Path $musubiDir)) { Write-FailExit "vendor\musubi-tuner missing after submodule update" }
+if (-not (Test-Path $sdScriptsDir)) { Write-FailExit "vendor\sd-scripts missing after submodule update" }
+Write-Ok "Trainer submodules synced ($musubiDir, $sdScriptsDir)"
 
 if (-not (Test-Path $TrainerVenv)) {
     & $python.Source -m venv $TrainerVenv
@@ -114,20 +145,40 @@ $musubiReq = Join-Path $musubiDir "requirements.txt"
 $sdReq = Join-Path $sdScriptsDir "requirements.txt"
 if (Test-Path $musubiReq) { & $trainerPython -m pip install --quiet -r $musubiReq }
 if (Test-Path $sdReq)     { & $trainerPython -m pip install --quiet -r $sdReq }
+# Install musubi-tuner itself so `python -m musubi_tuner.*` works.
+& $trainerPython -m pip install --quiet -e $musubiDir
 Write-Ok "Trainer deps installed"
 
-# --- 6. .env defaults --------------------------------------------------
+# --- 7. .env defaults --------------------------------------------------
 Write-Step "Writing .env defaults"
 $envFile = Join-Path $RepoRoot ".env"
 if (-not (Test-Path $envFile)) {
+    $legacyLine = if ($LegacyTrainersRoot) { "BRACKET_TRAINERS_ROOT=$LegacyTrainersRoot`r`n" } else { "" }
+
+    # Auto-detect LMStudio so the VLM judge can unload its model between
+    # training runs (otherwise VRAM stays occupied and Z-Image / Flux full
+    # FT runs grind to a halt). The lms CLI ships with the LMStudio
+    # desktop install; we just record its path. No user action required.
+    $lmsCandidate = Join-Path $env:USERPROFILE ".lmstudio\bin\lms.exe"
+    $lmsLine = ""
+    if (Test-Path $lmsCandidate) {
+        $lmsLine = "BRACKET_LMS_BIN=$lmsCandidate`r`n"
+        Write-Ok "Detected LMStudio at $lmsCandidate"
+    } else {
+        Write-Warn "LMStudio not detected at $lmsCandidate. Install LMStudio if you plan to use the VLM judge (https://lmstudio.ai). Bracket will still install fine."
+    }
+
     $envBody = @"
 # Bracket -- environment defaults. Generated by install.ps1.
 # Override anything below by editing this file or setting in your shell.
 
-BRACKET_TRAINERS_ROOT=$TrainersRoot
+# Trainers are git submodules under vendor/ (pinned in .gitmodules).
+# Bumping versions = maintainer commit; users just `git pull` + re-run install.
+$legacyLine
 BRACKET_VENV_PYTHON=$trainerPython
 BRACKET_MUSUBI_DIR=$musubiDir
 BRACKET_SD_SCRIPTS_DIR=$sdScriptsDir
+$lmsLine
 
 # Add when you have weights downloaded. Each preset only needs the paths
 # relevant to its model family -- leave the rest commented.

@@ -6,18 +6,24 @@
 #   2. Creates a .venv next to the project.
 #   3. Detects GPU (nvidia-smi) and selects a matching PyTorch wheel.
 #   4. Installs Bracket + its dependencies.
-#   5. Clones the trainers Bracket drives (sd-scripts, musubi-tuner) into
-#      ~/.cache/bracket/trainers/ and creates a shared trainer venv.
-#   6. Writes a .env with sensible defaults so the UI lands ready to run.
+#   5. Builds the React frontend (frontend/dist) if Node.js/npm is present.
+#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner) as
+#      pinned git submodules under vendor/ and creates a shared trainer
+#      venv at vendor/venv. Bumping a trainer is a maintainer commit; see
+#      docs/UPDATING_TRAINERS.md.
+#   7. Writes a .env with sensible defaults so the UI lands ready to run.
 #
 # Re-run is safe — every step is idempotent.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TRAINERS_ROOT="${BRACKET_TRAINERS_ROOT:-$HOME/.cache/bracket/trainers}"
+VENDOR_ROOT="$REPO_ROOT/vendor"
 VENV_DIR="$REPO_ROOT/.venv"
-TRAINER_VENV="$TRAINERS_ROOT/venv"
+TRAINER_VENV="$VENDOR_ROOT/venv"
+# Legacy compatibility: write BRACKET_TRAINERS_ROOT into .env only if the
+# user already had it set (older installs targeted ~/.cache/bracket/trainers).
+LEGACY_TRAINERS_ROOT="${BRACKET_TRAINERS_ROOT:-}"
 
 c_blue=$'\033[0;34m'
 c_green=$'\033[0;32m'
@@ -85,21 +91,40 @@ step "Installing Bracket (editable + dev)"
 python -m pip install --quiet -e ".[dev]"
 ok "Bracket installed"
 
-# ─── 5. Trainers + trainer venv ────────────────────────────────────
-step "Setting up trainers in $TRAINERS_ROOT"
-mkdir -p "$TRAINERS_ROOT"
-if [ ! -d "$TRAINERS_ROOT/musubi-tuner" ]; then
-    git clone --depth=1 https://github.com/kohya-ss/musubi-tuner "$TRAINERS_ROOT/musubi-tuner"
-    ok "Cloned musubi-tuner"
+# ─── 5. Frontend build ─────────────────────────────────────────────
+step "Building React frontend"
+FRONTEND_DIR="$REPO_ROOT/frontend"
+if [ ! -d "$FRONTEND_DIR" ]; then
+    warn "frontend/ directory missing — skipping UI build"
+elif ! command -v npm >/dev/null 2>&1; then
+    warn "npm not found. Install Node.js 20+ from https://nodejs.org/ then re-run this installer to build the React UI. (API endpoints still work without it.)"
 else
-    ok "musubi-tuner already present"
+    NODE_VERSION=$(node --version 2>/dev/null || echo "unknown")
+    ok "Node $NODE_VERSION detected"
+    (
+        cd "$FRONTEND_DIR"
+        if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund --loglevel=error
+        else
+            npm install --no-audit --no-fund --loglevel=error
+        fi
+        npm run build
+    )
+    ok "Frontend built (frontend/dist)"
 fi
-if [ ! -d "$TRAINERS_ROOT/musubi-tuner/sd-scripts" ]; then
-    git clone --depth=1 https://github.com/kohya-ss/sd-scripts "$TRAINERS_ROOT/musubi-tuner/sd-scripts"
-    ok "Cloned sd-scripts"
-else
-    ok "sd-scripts already present"
-fi
+
+# ─── 6. Trainers (git submodules) + trainer venv ───────────────────
+step "Syncing trainer submodules under vendor/"
+MUSUBI_DIR="$VENDOR_ROOT/musubi-tuner"
+SD_SCRIPTS_DIR="$VENDOR_ROOT/sd-scripts"
+
+# `git submodule update --init` is idempotent. Pinned commits live in
+# .gitmodules at the repo root — bumping a trainer is a maintainer commit,
+# not something this installer does. See docs/UPDATING_TRAINERS.md.
+git submodule update --init --recursive
+[ -d "$MUSUBI_DIR" ] || fail "vendor/musubi-tuner missing after submodule update"
+[ -d "$SD_SCRIPTS_DIR" ] || fail "vendor/sd-scripts missing after submodule update"
+ok "Trainer submodules synced ($MUSUBI_DIR, $SD_SCRIPTS_DIR)"
 
 # Trainer venv (shared by all trainers — they have compatible deps).
 if [ ! -d "$TRAINER_VENV" ]; then
@@ -120,28 +145,51 @@ fi
 ok "PyTorch installed"
 
 step "Installing trainer dependencies"
-if [ -f "$TRAINERS_ROOT/musubi-tuner/requirements.txt" ]; then
-    python -m pip install --quiet -r "$TRAINERS_ROOT/musubi-tuner/requirements.txt"
+if [ -f "$MUSUBI_DIR/requirements.txt" ]; then
+    python -m pip install --quiet -r "$MUSUBI_DIR/requirements.txt"
 fi
-if [ -f "$TRAINERS_ROOT/musubi-tuner/sd-scripts/requirements.txt" ]; then
-    python -m pip install --quiet -r "$TRAINERS_ROOT/musubi-tuner/sd-scripts/requirements.txt"
+if [ -f "$SD_SCRIPTS_DIR/requirements.txt" ]; then
+    python -m pip install --quiet -r "$SD_SCRIPTS_DIR/requirements.txt"
 fi
+# Install musubi-tuner itself so `python -m musubi_tuner.*` works.
+python -m pip install --quiet -e "$MUSUBI_DIR"
 ok "Trainer deps installed"
 
 deactivate
 
-# ─── 6. .env defaults ──────────────────────────────────────────────
+# ─── 7. .env defaults ──────────────────────────────────────────────
 step "Writing .env defaults"
 ENV_FILE="$REPO_ROOT/.env"
 if [ ! -f "$ENV_FILE" ]; then
+    legacy_line=""
+    if [ -n "$LEGACY_TRAINERS_ROOT" ]; then
+        legacy_line="BRACKET_TRAINERS_ROOT=$LEGACY_TRAINERS_ROOT"
+    fi
+
+    # Auto-detect LMStudio so the VLM judge can unload its model between
+    # training runs (otherwise VRAM stays occupied and Z-Image / Flux full
+    # FT runs grind to a halt). The lms CLI ships with the LMStudio
+    # desktop install; we just record its path. No user action required.
+    lms_line=""
+    LMS_CANDIDATE="$HOME/.lmstudio/bin/lms"
+    if [ -f "$LMS_CANDIDATE" ]; then
+        lms_line="BRACKET_LMS_BIN=$LMS_CANDIDATE"
+        ok "Detected LMStudio at $LMS_CANDIDATE"
+    else
+        warn "LMStudio not detected at $LMS_CANDIDATE. Install LMStudio if you plan to use the VLM judge (https://lmstudio.ai). Bracket will still install fine."
+    fi
+
     cat > "$ENV_FILE" <<EOF
 # Bracket — environment defaults. Generated by install.sh.
 # Override anything below by editing this file or exporting in your shell.
 
-BRACKET_TRAINERS_ROOT=$TRAINERS_ROOT
+# Trainers are git submodules under vendor/ (pinned in .gitmodules).
+# Bumping versions = maintainer commit; users just \`git pull\` + re-run install.
+$legacy_line
 BRACKET_VENV_PYTHON=$TRAINER_VENV/bin/python
-BRACKET_MUSUBI_DIR=$TRAINERS_ROOT/musubi-tuner
-BRACKET_SD_SCRIPTS_DIR=$TRAINERS_ROOT/musubi-tuner/sd-scripts
+BRACKET_MUSUBI_DIR=$MUSUBI_DIR
+BRACKET_SD_SCRIPTS_DIR=$SD_SCRIPTS_DIR
+$lms_line
 
 # Add when you have weights downloaded. Each preset only needs the paths
 # relevant to its model family — leave the rest commented.

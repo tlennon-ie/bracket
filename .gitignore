@@ -10,6 +10,9 @@ dist/
 # Venvs
 .venv/
 venv/
+# Trainer venv lives under vendor/ (created by install.*) — submoduled
+# trainer source is committed; the multi-GB cuda wheel install isn't.
+vendor/venv/
 
 # Local data
 runs/*

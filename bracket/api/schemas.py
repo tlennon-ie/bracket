@@ -259,3 +259,27 @@ class JudgeStatusOut(_Base):
 class HealthOut(_Base):
     status: str = "ok"
     version: str
+
+
+# ───────────────────────────── updater ─────────────────────────────
+
+
+class UpdateStatusOut(_Base):
+    """Result of ``GET /api/update/check``."""
+
+    current_version: str
+    latest_version: Optional[str] = None
+    update_available: bool = False
+    release_url: Optional[str] = None
+    release_notes: Optional[str] = None
+    checked_at: float = 0.0
+    error: Optional[str] = None
+
+
+class TriggerUpdateOut(_Base):
+    """Result of ``POST /api/update/apply``."""
+
+    spawned: bool
+    message: str
+    script: Optional[str] = None
+    log_path: Optional[str] = None

@@ -166,3 +166,20 @@ export interface StopSessionResponse {
 	stopped: boolean;
 	message: string;
 }
+
+export interface UpdateStatus {
+	current_version: string;
+	latest_version: string | null;
+	update_available: boolean;
+	release_url: string | null;
+	release_notes: string | null;
+	checked_at: number;
+	error: string | null;
+}
+
+export interface TriggerUpdateResponse {
+	spawned: boolean;
+	message: string;
+	script: string | null;
+	log_path: string | null;
+}

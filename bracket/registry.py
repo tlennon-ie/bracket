@@ -23,15 +23,20 @@ from bracket.trainer.base import Trainer
 
 # Default paths are resolved (in priority order):
 #   1. Environment variables (BRACKET_VENV_PYTHON, BRACKET_MUSUBI_DIR, …)
-#   2. The bundled trainers root at ~/.cache/bracket/trainers/ (created by
-#      install.sh / install.ps1 / install.bat — see scripts/install_*).
-#   3. An empty string — the user fills it in via the Setup tab.
+#   2. The repo-vendored trainers under <repo>/vendor/ (git submodules,
+#      pinned to specific commits — see .gitmodules and the bump workflow
+#      in docs/UPDATING_TRAINERS.md).
+#   3. The legacy ~/.cache/bracket/trainers/ location for users who
+#      installed before the submodule layout existed.
+#   4. An empty string — the user fills it in via the Setup tab.
 #
 # Nothing in this module assumes a specific developer's filesystem. Public
 # users land on empty defaults if they haven't run the installer; pre-existing
 # users can keep their setup by exporting the env vars.
 
-_TRAINERS_ROOT = Path(
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_VENDOR = _REPO_ROOT / "vendor"
+_LEGACY_TRAINERS_ROOT = Path(
     os.environ.get("BRACKET_TRAINERS_ROOT", str(Path.home() / ".cache" / "bracket" / "trainers"))
 )
 
@@ -41,27 +46,47 @@ def _env_or_default(env_var: str, default: str) -> str:
     return os.environ.get(env_var, default)
 
 
+def _first_existing(*candidates: Path) -> str:
+    """Return the first path that exists as a directory or file, else empty."""
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return ""
+
+
 def _venv_python_default() -> str:
-    """Resolve the trainer venv python — env var or installed location."""
+    """Resolve the trainer venv python — env var or installed location.
+
+    Looks for the in-repo ``vendor/venv`` first (current install layout),
+    then falls back to the legacy user-cache location.
+    """
     if (env := os.environ.get("BRACKET_VENV_PYTHON")):
         return env
     suffix = "Scripts/python.exe" if os.name == "nt" else "bin/python"
-    candidate = _TRAINERS_ROOT / "venv" / suffix
-    return str(candidate) if candidate.exists() else ""
+    return _first_existing(
+        _REPO_VENDOR / "venv" / suffix,
+        _LEGACY_TRAINERS_ROOT / "venv" / suffix,
+    )
 
 
 def _musubi_dir_default() -> str:
     if (env := os.environ.get("BRACKET_MUSUBI_DIR")):
         return env
-    candidate = _TRAINERS_ROOT / "musubi-tuner"
-    return str(candidate) if candidate.exists() else ""
+    return _first_existing(
+        _REPO_VENDOR / "musubi-tuner",
+        _LEGACY_TRAINERS_ROOT / "musubi-tuner",
+    )
 
 
 def _sd_scripts_default() -> str:
     if (env := os.environ.get("BRACKET_SD_SCRIPTS_DIR")):
         return env
-    candidate = _TRAINERS_ROOT / "musubi-tuner" / "sd-scripts"
-    return str(candidate) if candidate.exists() else ""
+    # New (submodule) layout puts sd-scripts as a sibling of musubi-tuner;
+    # legacy install nested it under musubi-tuner/sd-scripts.
+    return _first_existing(
+        _REPO_VENDOR / "sd-scripts",
+        _LEGACY_TRAINERS_ROOT / "musubi-tuner" / "sd-scripts",
+    )
 
 
 _DEFAULT_VENV_PYTHON = _venv_python_default()

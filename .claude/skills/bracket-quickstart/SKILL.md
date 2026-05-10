@@ -5,12 +5,14 @@ description: Use when the user asks to install, launch, or first-run Bracket; or
 
 # Bracket — quickstart
 
-When the user wants to install or launch Bracket, follow these steps in order.
+When the user wants to install or launch Bracket, follow these steps in
+order.
 
 ## 1. Detect platform
 
 - Linux / macOS / WSL2 → use `install.sh` and `launch.sh`
-- Windows native → use `install.ps1` and `launch.ps1` (or the `.bat` wrappers)
+- Windows native → use `install.ps1` and `launch.ps1` (or the `.bat`
+  wrappers `install.bat` / `launch.bat`)
 
 ## 2. Install
 
@@ -23,16 +25,24 @@ install.bat                   # Windows cmd.exe
 ```
 
 The installer:
-- Verifies Python 3.10+
-- Detects GPU (`nvidia-smi`) and picks the matching PyTorch wheel
-- Creates `.venv/` and installs Bracket editable + dev deps
-- Clones `musubi-tuner` and `sd-scripts` into `~/.cache/bracket/trainers/`
-  (Windows: `%LOCALAPPDATA%\bracket\trainers\`)
-- Creates a shared trainer venv with PyTorch
-- Writes `.env` with sensible defaults
+- Verifies Python 3.10+.
+- Detects GPU via `nvidia-smi` and picks the matching PyTorch wheel
+  (`cu124` / `cu121` / `cu118` / CPU).
+- Creates `.venv/` and installs Bracket editable + dev deps.
+- Detects Node.js and runs `npm ci && npm run build` to build the React
+  bundle into `frontend/dist/` (warn-and-skip if Node missing).
+- Syncs `vendor/musubi-tuner` and `vendor/sd-scripts` git submodules
+  pinned to specific commits in `.gitmodules`.
+- Creates a shared trainer venv at `vendor/venv/` with PyTorch +
+  trainer requirements + editable install of musubi-tuner.
+- Detects LMStudio at `~/.lmstudio/bin/lms[.exe]` and writes
+  `BRACKET_LMS_BIN` to `.env` (needed so the VLM judge can release
+  VRAM between runs — see `bracket-debug-run`).
+- Writes `.env` with sensible defaults.
 
-If install fails: most likely cause is `git` not on PATH or the repo root
-not being writable. Re-running is safe.
+If install fails: most likely causes are `git` / Node / Python missing
+from PATH, or the repo root not being writable. Re-running is safe —
+every step is idempotent.
 
 ## 3. Launch
 
@@ -42,27 +52,61 @@ not being writable. Re-running is safe.
 launch.bat                    # Windows cmd.exe
 ```
 
-This starts the FastAPI server (which also serves the built React frontend)
-on `http://127.0.0.1:8000`. The browser doesn't auto-open — point at that URL.
+This starts FastAPI (with the built React SPA mounted at `/`) on
+`http://127.0.0.1:8000`. The browser doesn't auto-open — point at that
+URL.
+
+If the URL returns 404 instead of the UI: the React bundle isn't built.
+Run `cd frontend && npm run build` then refresh, or re-run the
+installer.
 
 ## 4. First-run sanity check
 
 Once the UI is up:
-1. **Setup tab** should show 3 model families (SDXL, Z-Image, Flux-2-Klein).
-2. Pick `Z-Image` → `LoRA`. Required fields appear (`*` marked).
-3. Most paths will be empty unless the user has set `BRACKET_*_PATH` env
-   vars or has weights downloaded.
+1. **Setup tab** should show many model families (SDXL, Z-Image,
+   Flux-2-Klein, Flux.1, Flux.1-Kontext, Qwen-Image, Qwen-Image-Edit,
+   SD3.5, HunyuanVideo, Wan 2.2, Wan 2.1, LTX-Video, FramePack).
+2. Pick any one → `LoRA` or `Full FT`. Required fields appear (`*`
+   marked).
+3. Trainer-infrastructure paths (musubi-tuner directory, sd-scripts
+   directory, trainer venv python) should be **prefilled** from the
+   `vendor/` submodules — the user shouldn't have to type them.
+4. Model-weight paths (DiT / VAE / TE) will be empty unless the user
+   has set the corresponding `BRACKET_*_PATH` env vars in `.env`.
 
 If the UI doesn't load: check the server logs (printed to stdout) for
 import errors. Common: `pandas` or `pydantic` missing — `pip install
--e .` from the venv usually fixes.
+-e .` from `.venv` usually fixes.
 
-## 5. What to recommend if user has no weights yet
+## 5. What to recommend if the user has no weights yet
 
-Bracket needs a base model checkpoint to fine-tune against. Point them at:
-- SDXL base from Hugging Face (`stabilityai/stable-diffusion-xl-base-1.0`)
-- Z-Image base from Tongyi (or Z-Image Turbo for inference-only experimentation; Bracket trains on **base** not Turbo — see CLAUDE.md)
-- Flux-2-Klein 9B fp8 from the Flux-2 release
+Bracket needs a base model checkpoint to fine-tune against. Each preset
+in the UI lists the env-var name in its help text. Common ones:
 
-Set the resolved paths via `BRACKET_VAE_PATH`, `BRACKET_QWEN3_TE_PATH`,
-etc. in `.env` so they don't have to retype each session.
+| Family | Env vars to populate |
+|---|---|
+| SDXL | `BRACKET_SDXL_PRETRAINED` |
+| Z-Image | `BRACKET_VAE_PATH`, `BRACKET_QWEN3_TE_PATH`, plus DiT path per session |
+| Flux-2-Klein | `BRACKET_FLUX2_DIT_PATH`, `BRACKET_VAE_PATH`, `BRACKET_MISTRAL3_TE_PATH` |
+| Flux.1 / Flux.1-Kontext | `BRACKET_FLUX1_DIT_PATH`, `BRACKET_FLUX1_AE_PATH`, `BRACKET_T5XXL_PATH`, `BRACKET_CLIP_L_PATH` (+ `BRACKET_FLUX1_KONTEXT_DIT_PATH` for Kontext) |
+| Qwen-Image / Qwen-Image-Edit | `BRACKET_QWEN_IMAGE_DIT_PATH`, `BRACKET_QWEN_IMAGE_VAE_PATH`, `BRACKET_QWEN_IMAGE_TE_PATH` (TE is **Qwen2.5-VL-7B**, NOT Qwen3) |
+| SD3.5 | `BRACKET_SD35_PRETRAINED` (single file with MMDiT + T5 + CLIPs) |
+| HunyuanVideo / FramePack | `BRACKET_HUNYUAN_VIDEO_DIT_PATH`, `BRACKET_HUNYUAN_VIDEO_VAE_PATH`, `BRACKET_LLAMA3_PATH`, `BRACKET_CLIP_L_PATH` |
+| Wan 2.1 / 2.2 | `BRACKET_WAN_DIT_PATH`, `BRACKET_WAN_VAE_PATH`, `BRACKET_UMT5_PATH` |
+| LTX-Video | `BRACKET_LTX_VIDEO_DIT_PATH`, `BRACKET_LTX_VIDEO_VAE_PATH`, `BRACKET_T5XXL_PATH` |
+
+Don't bundle weights — they're 5-25 GB per family. Tell the user to
+download the ones they need from Hugging Face / the model's release
+page, then either set the env vars in `.env` or fill the path field in
+the Setup tab once per session.
+
+## 6. Want to run a session next?
+
+Hand off to the `bracket-run-session` skill. It walks through dataset
+selection, judge configuration, budget, and stage-2 finals.
+
+## 7. Want to build a dataset.toml?
+
+Hand off to the `bracket-dataset-toml` skill. It generates a valid
+musubi/sd-scripts dataset config from a directory of images +
+captions, asking the user only for the paths it can't infer.

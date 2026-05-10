@@ -2,6 +2,7 @@ import { NavRail } from "@/components/shell/NavRail";
 import { RunControlsBar } from "@/components/shell/RunControlsBar";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcut";
 import { useTheme } from "@/hooks/useTheme";
+import { useUpdateChecker } from "@/hooks/useUpdateChecker";
 import { api } from "@/lib/api";
 import { useUIStore } from "@/store/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -23,6 +24,8 @@ export function AppShell({ children }: AppShellProps) {
 		mutationFn: api.stopSession,
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["snapshot"] }),
 	});
+
+	useUpdateChecker();
 
 	// Keyboard shortcuts (per migration plan §7).
 	useKeyboardShortcuts([

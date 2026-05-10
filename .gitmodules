@@ -1,0 +1,8 @@
+[submodule "vendor/musubi-tuner"]
+	path = vendor/musubi-tuner
+	url = https://github.com/kohya-ss/musubi-tuner
+	shallow = true
+[submodule "vendor/sd-scripts"]
+	path = vendor/sd-scripts
+	url = https://github.com/kohya-ss/sd-scripts
+	shallow = true

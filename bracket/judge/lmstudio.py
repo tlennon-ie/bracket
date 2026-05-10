@@ -18,7 +18,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -157,39 +160,90 @@ class LMStudioJudge(SampleJudge):
         # Already on a 0-10 scale (or close) — just clip
         return {k: max(0.0, min(10.0, v)) for k, v in scores.items()}
 
-    def _api_v0_url(self, suffix: str) -> str:
-        """Translate an OpenAI-compat base_url to LMStudio's /api/v0 root.
+    @staticmethod
+    def _resolve_lms_binary() -> Optional[str]:
+        """Locate the ``lms`` CLI shipped with LMStudio.
 
-        base_url is typically `http://localhost:1234/v1`; LMStudio's REST
-        API for model lifecycle lives at `http://localhost:1234/api/v0`.
+        Resolution order:
+          1. ``$BRACKET_LMS_BIN`` env var (explicit user override)
+          2. ``lms`` on ``PATH`` (set by ``lms bootstrap``)
+          3. Per-user install:
+             ``%USERPROFILE%\\.lmstudio\\bin\\lms.exe`` (Windows) or
+             ``~/.lmstudio/bin/lms`` (POSIX)
+
+        Returns the absolute path or ``None`` if no binary is found.
         """
-        base = self.config.base_url.rstrip("/")
-        if base.endswith("/v1"):
-            base = base[:-3]
-        return f"{base}/api/v0{suffix}"
+
+        override = os.environ.get("BRACKET_LMS_BIN")
+        if override and Path(override).is_file():
+            return override
+
+        on_path = shutil.which("lms")
+        if on_path:
+            return on_path
+
+        if os.name == "nt":
+            candidate = Path.home() / ".lmstudio" / "bin" / "lms.exe"
+        else:
+            candidate = Path.home() / ".lmstudio" / "bin" / "lms"
+        return str(candidate) if candidate.is_file() else None
 
     def eject(self) -> None:
         """Best-effort unload of the vision model from LMStudio.
 
         Frees VRAM held by the VLM so the next training subprocess can
-        claim the full GPU. Failures are logged and swallowed — we never
-        want a flaky control-plane call to abort the orchestration loop.
+        claim the full GPU. The previous HTTP endpoint
+        (``POST /api/v0/models/unload``) was removed by LMStudio — current
+        builds reject it with "Unexpected endpoint or method" and the model
+        stays resident. We now call ``lms unload <identifier>`` instead,
+        which is the only mechanism LMStudio still supports.
+
+        Failures are logged and swallowed — we never want a flaky
+        control-plane call to abort the orchestration loop. If ``lms`` is
+        missing we log a one-line install hint so the user knows why the
+        next training run might be slow.
         """
-        try:
-            url = self._api_v0_url("/models/unload")
-            body = json.dumps({"identifier": self.config.model}).encode("utf-8")
-            req = urllib.request.Request(
-                url, data=body, method="POST",
-                headers={"Content-Type": "application/json"},
+
+        identifier = self.config.model
+        lms = self._resolve_lms_binary()
+        if not lms:
+            logger.warning(
+                "LMStudio: 'lms' CLI not found — cannot unload %s. "
+                "Install it from LMStudio settings ('Developer' tab → "
+                "'Install lms CLI') or run `lms bootstrap`. The VLM will "
+                "stay resident and may compete with the trainer for VRAM.",
+                identifier,
             )
-            with urllib.request.urlopen(req, timeout=15.0) as resp:
-                resp.read()
-            logger.info("LMStudio: ejected model %s", self.config.model)
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            return
+
+        try:
+            result = subprocess.run(  # noqa: S603 - lms binary path resolved above
+                [lms, "unload", identifier],
+                capture_output=True,
+                text=True,
+                timeout=30.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
             logger.warning(
                 "LMStudio eject failed for %s (continuing): %s",
-                self.config.model, e,
+                identifier, e,
             )
+            return
+
+        if result.returncode == 0:
+            logger.info("LMStudio: ejected model %s via lms CLI", identifier)
+            return
+
+        # Non-zero exit. Common cases:
+        #   - model not currently loaded (`lms unload` returns non-zero)
+        #   - identifier didn't match the loaded handle
+        # Either is recoverable; log stderr and continue.
+        stderr = (result.stderr or result.stdout or "").strip()
+        logger.warning(
+            "LMStudio eject returned %d for %s: %s",
+            result.returncode, identifier, stderr or "<no output>",
+        )
 
     def judge_image(self, image_path: Path, prompt: str) -> SampleJudgement:
         image_path = Path(image_path)

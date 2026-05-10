@@ -165,38 +165,91 @@ def test_lmstudio_judge_image_handles_network_error_gracefully(tmp_path: Path, m
     assert res.overall == 0.0
 
 
-def test_lmstudio_eject_posts_to_unload_endpoint(monkeypatch):
-    """eject() must hit /api/v0/models/unload (LMStudio's REST root sibling
-    of /v1) so VRAM is released between training runs."""
+def test_lmstudio_eject_invokes_lms_cli(monkeypatch, tmp_path):
+    """eject() must shell out to `lms unload <identifier>`. The previous
+    HTTP endpoint was removed by LMStudio and silently no-ops if used."""
+    fake_lms = tmp_path / "lms.exe"
+    fake_lms.write_text("#!/bin/sh\nexit 0\n")
     captured: dict[str, object] = {}
 
-    class _FakeResp:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def read(self): return b"{}"
+    def _fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["timeout"] = kwargs.get("timeout")
 
-    def _fake_urlopen(req, timeout=None):
-        captured["url"] = req.full_url
-        captured["method"] = req.get_method()
-        captured["body"] = req.data
-        return _FakeResp()
+        class _R:
+            returncode = 0
+            stdout = "Unloaded qwen3-vl-8b\n"
+            stderr = ""
+
+        return _R()
 
     import bracket.judge.lmstudio as lm
-    monkeypatch.setattr(lm.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(lm.LMStudioJudge, "_resolve_lms_binary",
+                        staticmethod(lambda: str(fake_lms)))
+    monkeypatch.setattr(lm.subprocess, "run", _fake_run)
+
     j = LMStudioJudge(LMStudioJudgeConfig(
         base_url="http://localhost:1234/v1", model="qwen3-vl-8b",
     ))
     j.eject()
-    assert captured["url"] == "http://localhost:1234/api/v0/models/unload"
-    assert captured["method"] == "POST"
-    assert b'"identifier"' in captured["body"]
-    assert b"qwen3-vl-8b" in captured["body"]
+
+    assert captured["cmd"] == [str(fake_lms), "unload", "qwen3-vl-8b"]
+    assert captured["timeout"] == 30.0
 
 
-def test_lmstudio_eject_swallows_failures(monkeypatch):
+def test_lmstudio_eject_warns_when_cli_missing(monkeypatch, caplog):
+    """If `lms` isn't installed, eject() should log a hint, not raise."""
+    import logging as _logging
+    import bracket.judge.lmstudio as lm
+    monkeypatch.setattr(lm.LMStudioJudge, "_resolve_lms_binary",
+                        staticmethod(lambda: None))
+    j = LMStudioJudge(LMStudioJudgeConfig(model="qwen3-vl-8b"))
+    with caplog.at_level(_logging.WARNING, logger="bracket.judge.lmstudio"):
+        j.eject()
+    assert any("lms" in rec.getMessage() for rec in caplog.records)
+
+
+def test_lmstudio_eject_swallows_subprocess_failures(monkeypatch, tmp_path):
     """A flaky LMStudio control plane must not abort the orchestration loop."""
-    j = LMStudioJudge(LMStudioJudgeConfig(
-        base_url="http://127.0.0.1:1/v1", model="x", timeout_s=0.1,
-    ))
-    # Should not raise even though port 1 isn't reachable
-    j.eject()
+    fake_lms = tmp_path / "lms"
+    fake_lms.write_text("")
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated cli crash")
+
+    import bracket.judge.lmstudio as lm
+    monkeypatch.setattr(lm.LMStudioJudge, "_resolve_lms_binary",
+                        staticmethod(lambda: str(fake_lms)))
+    monkeypatch.setattr(lm.subprocess, "run", _boom)
+    j = LMStudioJudge(LMStudioJudgeConfig(model="qwen3-vl-8b"))
+    j.eject()  # must not raise
+
+
+def test_lmstudio_eject_handles_nonzero_exit(monkeypatch, tmp_path, caplog):
+    """`lms unload` returns non-zero when the model isn't currently loaded
+    — that's not fatal."""
+    fake_lms = tmp_path / "lms"
+    fake_lms.write_text("")
+
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = "Model 'x' is not currently loaded"
+
+    import bracket.judge.lmstudio as lm
+    import logging as _logging
+    monkeypatch.setattr(lm.LMStudioJudge, "_resolve_lms_binary",
+                        staticmethod(lambda: str(fake_lms)))
+    monkeypatch.setattr(lm.subprocess, "run", lambda *a, **k: _R())
+    j = LMStudioJudge(LMStudioJudgeConfig(model="x"))
+    with caplog.at_level(_logging.WARNING, logger="bracket.judge.lmstudio"):
+        j.eject()
+    assert any("returned 1" in r.getMessage() for r in caplog.records)
+
+
+def test_lmstudio_resolve_lms_binary_respects_env(monkeypatch, tmp_path):
+    """BRACKET_LMS_BIN env var must override PATH lookup."""
+    binary = tmp_path / "custom-lms"
+    binary.write_text("")
+    monkeypatch.setenv("BRACKET_LMS_BIN", str(binary))
+    assert LMStudioJudge._resolve_lms_binary() == str(binary)
