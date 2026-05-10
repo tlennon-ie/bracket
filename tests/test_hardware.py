@@ -1,6 +1,12 @@
+import subprocess
+
+import pytest
+
+from bracket import hardware
 from bracket.hardware import (
     SDXL_LORA_BATCH_CHOICES_BY_TIER,
     SDXL_LORA_DEFAULT_BATCH_BY_TIER,
+    detect_gpu,
     vram_tier,
 )
 
@@ -32,3 +38,61 @@ def test_default_batch_inside_choices():
     for tier, choices in SDXL_LORA_BATCH_CHOICES_BY_TIER.items():
         default = SDXL_LORA_DEFAULT_BATCH_BY_TIER[tier]
         assert default in choices, f"tier {tier} default {default} not in {choices}"
+
+
+# ─── detect_gpu fallback ────────────────────────────────────────────
+
+
+def test_detect_gpu_returns_none_when_torch_and_nvsmi_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a CPU-only env with no torch and no nvidia-smi, detect_gpu must
+    return None silently — no traceback in the log."""
+
+    monkeypatch.setattr(hardware, "_detect_via_torch", lambda _i: None)
+    monkeypatch.setattr(hardware.shutil, "which", lambda _name: None)
+    assert detect_gpu() is None
+
+
+def test_detect_gpu_falls_back_to_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """When torch is unavailable (Bracket app venv) but nvidia-smi is on
+    PATH, detect_gpu must shell out and return parsed info."""
+
+    fake_nvsmi = tmp_path / "nvidia-smi"
+    fake_nvsmi.write_text("")
+
+    class _R:
+        returncode = 0
+        stdout = "NVIDIA GeForce RTX 5090, 32607\n"
+        stderr = ""
+
+    monkeypatch.setattr(hardware, "_detect_via_torch", lambda _i: None)
+    monkeypatch.setattr(hardware.shutil, "which", lambda name: str(fake_nvsmi) if name == "nvidia-smi" else None)
+    monkeypatch.setattr(hardware.subprocess, "run", lambda *a, **k: _R())
+
+    info = detect_gpu()
+    assert info is not None
+    assert info.name == "NVIDIA GeForce RTX 5090"
+    # 32607 MiB / 1024 ≈ 31.84 GiB — should land in the "high" tier
+    assert 31.0 < info.total_vram_gb < 32.5
+    assert vram_tier(info.total_vram_gb) == "high"
+
+
+def test_detect_gpu_handles_nvidia_smi_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """If nvidia-smi exists but errors out (driver mismatch, no CUDA), we
+    swallow it and return None."""
+
+    fake_nvsmi = tmp_path / "nvidia-smi"
+    fake_nvsmi.write_text("")
+
+    def _boom(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="nvidia-smi", timeout=5.0)
+
+    monkeypatch.setattr(hardware, "_detect_via_torch", lambda _i: None)
+    monkeypatch.setattr(hardware.shutil, "which", lambda _name: str(fake_nvsmi))
+    monkeypatch.setattr(hardware.subprocess, "run", _boom)
+    assert detect_gpu() is None

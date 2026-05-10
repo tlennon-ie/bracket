@@ -11,6 +11,8 @@ include batch_size as a real search-space knob instead of a pin.
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
@@ -24,10 +26,16 @@ class GPUInfo:
     device_index: int
 
 
-def detect_gpu(device_index: int = 0) -> Optional[GPUInfo]:
-    """Returns GPU info for the given device, or None if no CUDA / detection fails."""
+def _detect_via_torch(device_index: int) -> Optional[GPUInfo]:
+    """Try torch.cuda.get_device_properties — only works in the trainer venv
+    where torch is installed. Returns None silently when torch isn't on the
+    path (the app venv intentionally doesn't depend on torch)."""
+
     try:
-        import torch  # imported lazily so cpu-only test runs don't pay the import cost
+        import torch  # noqa: PLC0415 - lazy import is the whole point
+    except ImportError:
+        return None
+    try:
         if not torch.cuda.is_available():
             return None
         props = torch.cuda.get_device_properties(device_index)
@@ -37,8 +45,59 @@ def detect_gpu(device_index: int = 0) -> Optional[GPUInfo]:
             device_index=device_index,
         )
     except Exception:
-        logger.exception("GPU detection failed")
+        logger.exception("torch GPU detection failed")
         return None
+
+
+def _detect_via_nvidia_smi(device_index: int) -> Optional[GPUInfo]:
+    """Fallback that reads ``nvidia-smi`` directly. Works in any venv where
+    the binary is on PATH, including the Bracket app venv that doesn't
+    bundle torch."""
+
+    nvsmi = shutil.which("nvidia-smi")
+    if not nvsmi:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - nvidia-smi resolved via shutil.which
+            [
+                nvsmi,
+                f"--id={device_index}",
+                "--query-gpu=name,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    line = (result.stdout or "").strip().splitlines()[:1]
+    if not line:
+        return None
+    parts = [p.strip() for p in line[0].split(",")]
+    if len(parts) < 2:
+        return None
+    name, mem_mib = parts[0], parts[1]
+    try:
+        vram_gb = int(mem_mib) / 1024.0
+    except ValueError:
+        return None
+    return GPUInfo(name=name, total_vram_gb=vram_gb, device_index=device_index)
+
+
+def detect_gpu(device_index: int = 0) -> Optional[GPUInfo]:
+    """Return GPU info for the given device, or ``None`` if no CUDA GPU / no
+    detection mechanism available.
+
+    Tries torch first (richer detail when running inside the trainer venv),
+    falls back to ``nvidia-smi`` (works in the Bracket app venv which
+    intentionally doesn't depend on torch).
+    """
+
+    return _detect_via_torch(device_index) or _detect_via_nvidia_smi(device_index)
 
 
 def vram_tier(vram_gb: float) -> str:
