@@ -57,10 +57,18 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
     DRIVER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
     if [ -n "${GPU_NAME:-}" ]; then
-        # Crude CUDA-version inference from driver — see PyTorch wheel matrix
+        # Driver -> CUDA wheel mapping. cu128 is required for Blackwell
+        # GPUs (RTX 5080 / 5090, sm_120) since cu124 wheels stop at sm_90.
+        # Detect "RTX 50" in the GPU name as the safest Blackwell signal —
+        # driver 570+ is a necessary but not sufficient condition.
+        IS_BLACKWELL=0
+        case "$GPU_NAME" in *"RTX 50"*) IS_BLACKWELL=1 ;; esac
         if [ -n "${DRIVER:-}" ]; then
             DRIVER_MAJOR=${DRIVER%%.*}
-            if [ "$DRIVER_MAJOR" -ge 555 ]; then
+            if [ "$IS_BLACKWELL" -eq 1 ] || [ "$DRIVER_MAJOR" -ge 570 ]; then
+                TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+                CUDA_TAG="cu128"
+            elif [ "$DRIVER_MAJOR" -ge 555 ]; then
                 TORCH_INDEX="https://download.pytorch.org/whl/cu124"
                 CUDA_TAG="cu124"
             elif [ "$DRIVER_MAJOR" -ge 525 ]; then
@@ -71,7 +79,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
                 CUDA_TAG="cu118"
             fi
         fi
-        GPU_DESC="$GPU_NAME (driver $DRIVER → ${CUDA_TAG:-cpu})"
+        GPU_DESC="$GPU_NAME (driver $DRIVER -> ${CUDA_TAG:-cpu})"
     fi
 fi
 ok "GPU: $GPU_DESC"
@@ -152,8 +160,14 @@ if [ -f "$SD_SCRIPTS_DIR/requirements.txt" ]; then
     python -m pip install --quiet -r "$SD_SCRIPTS_DIR/requirements.txt"
 fi
 # Install musubi-tuner itself so `python -m musubi_tuner.*` works.
-python -m pip install --quiet -e "$MUSUBI_DIR"
-ok "Trainer deps installed"
+# --ignore-requires-python: musubi's pyproject pins <3.13 conservatively
+# but works fine on 3.13. Without this, install silently no-ops on 3.13.
+# No --quiet here: any pip failure here breaks every training run, so we
+# want it visible.
+python -m pip install --ignore-requires-python -e "$MUSUBI_DIR"
+python -c "import musubi_tuner" >/dev/null 2>&1 \
+    || fail "musubi_tuner not importable after install -- check pip output above"
+ok "Trainer deps installed (musubi_tuner importable)"
 
 deactivate
 

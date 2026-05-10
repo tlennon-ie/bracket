@@ -56,9 +56,15 @@ if ($nvsmi) {
     $gpuName = (& nvidia-smi --query-gpu=name --format=csv,noheader 2>$null | Select-Object -First 1)
     $driver = (& nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>$null | Select-Object -First 1)
     if ($gpuName) {
+        # Driver -> CUDA wheel mapping. cu128 is required for Blackwell
+        # GPUs (RTX 5080 / 5090, sm_120) since cu124 wheels stop at sm_90.
+        # Detect "RTX 50" in the GPU name as the safest Blackwell signal —
+        # driver 570+ is a necessary but not sufficient condition.
+        $isBlackwell = $gpuName -match 'RTX\s*50\d{2}'
         if ($driver) {
             $driverMajor = [int]($driver.Split('.')[0])
-            if ($driverMajor -ge 555) { $torchIndex = "https://download.pytorch.org/whl/cu124"; $cudaTag = "cu124" }
+            if ($isBlackwell -or $driverMajor -ge 570) { $torchIndex = "https://download.pytorch.org/whl/cu128"; $cudaTag = "cu128" }
+            elseif ($driverMajor -ge 555) { $torchIndex = "https://download.pytorch.org/whl/cu124"; $cudaTag = "cu124" }
             elseif ($driverMajor -ge 525) { $torchIndex = "https://download.pytorch.org/whl/cu121"; $cudaTag = "cu121" }
             else { $torchIndex = "https://download.pytorch.org/whl/cu118"; $cudaTag = "cu118" }
         }
@@ -146,8 +152,16 @@ $sdReq = Join-Path $sdScriptsDir "requirements.txt"
 if (Test-Path $musubiReq) { & $trainerPython -m pip install --quiet -r $musubiReq }
 if (Test-Path $sdReq)     { & $trainerPython -m pip install --quiet -r $sdReq }
 # Install musubi-tuner itself so `python -m musubi_tuner.*` works.
-& $trainerPython -m pip install --quiet -e $musubiDir
-Write-Ok "Trainer deps installed"
+# --ignore-requires-python: musubi's pyproject pins <3.13 conservatively
+# but works fine on 3.13. Without this, install silently no-ops on 3.13.
+# No --quiet here: any pip failure here breaks every training run, so we
+# want it visible.
+& $trainerPython -m pip install --ignore-requires-python -e $musubiDir
+if ($LASTEXITCODE -ne 0) { Write-FailExit "pip install -e vendor\musubi-tuner failed" }
+# Verify the install actually took.
+& $trainerPython -c "import musubi_tuner" 2>$null
+if ($LASTEXITCODE -ne 0) { Write-FailExit "musubi_tuner not importable after install -- check the pip output above" }
+Write-Ok "Trainer deps installed (musubi_tuner importable)"
 
 # --- 7. .env defaults --------------------------------------------------
 Write-Step "Writing .env defaults"
