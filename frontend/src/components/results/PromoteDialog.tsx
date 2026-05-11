@@ -166,12 +166,22 @@ export function PromoteDialog({ row, open, onOpenChange }: PromoteDialogProps) {
 						</Label>
 						<Input
 							id="promote_dataset"
-							placeholder="leave blank to use the session's original dataset"
+							placeholder="leave blank — uses the full dataset from the original session"
 							value={form.full_dataset_toml}
 							onChange={(e) =>
 								setForm((s) => ({ ...s, full_dataset_toml: e.target.value }))
 							}
 						/>
+						<p className="text-xs text-muted-foreground">
+							Blank uses the full{" "}
+							<code className="font-mono-tight">dataset_toml</code> you set on
+							the Setup tab. The search-time subset at{" "}
+							<code className="font-mono-tight">
+								&lt;output&gt;/subset/dataset.toml
+							</code>{" "}
+							is never used here — promote runs always train on the full
+							data.
+						</p>
 					</div>
 					<Label
 						className="col-span-2 flex items-start gap-2 normal-case tracking-normal cursor-pointer"
