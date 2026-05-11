@@ -26,7 +26,7 @@ from bracket.search.space import (
 )
 from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
-    make_accelerate_launch_prefix, make_subprocess_env,
+    make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
 )
 
 
@@ -168,6 +168,9 @@ class SD35LoRATrainer(Trainer):
         seed: int,
         sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         if not isinstance(config, SD35LoRAConfig):
             raise TypeError(f"expected SD35LoRAConfig, got {type(config).__name__}")
@@ -209,7 +212,7 @@ class SD35LoRATrainer(Trainer):
             "--save_precision", "bf16",
             "--save_model_as", "safetensors",
             "--no_metadata",
-            "--save_every_n_steps", str(max(1, max_steps)),
+            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
             "--max_data_loader_n_workers", str(config.dataloader_workers),
             "--persistent_data_loader_workers",
             "--weighting_scheme", "logit_normal",
@@ -225,6 +228,11 @@ class SD35LoRATrainer(Trainer):
                 "--sample_every_n_steps", str(sample_every_n_steps),
                 "--sample_sampler", "euler",
             ]
+
+        if save_state:
+            cmd.append("--save_state")
+        if resume_from is not None:
+            cmd += ["--resume", str(resume_from)]
 
         return LaunchSpec(
             cmd=cmd, cwd=self.sd_scripts_dir, env=make_subprocess_env(),

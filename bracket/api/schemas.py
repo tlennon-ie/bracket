@@ -292,3 +292,75 @@ class TriggerUpdateOut(_Base):
     message: str
     script: Optional[str] = None
     log_path: Optional[str] = None
+
+
+# ───────────────────────────── promote / export ─────────────────────────────
+
+
+class TrainingConfigExportOut(_Base):
+    """Result of ``GET /api/runs/{run_id}/training-config``.
+
+    Bundles the candidate's hyperparameters with the session-level
+    metadata needed to reproduce or promote the run to a full training:
+    the original (full) dataset_toml path, the sample_prompts path, the
+    trainer family/type, and a textual ``training_command`` the user can
+    paste into a shell to reproduce.
+    """
+
+    run_id: str
+    role: str
+    family: str
+    training_type: str
+    score: Optional[float] = None
+    config: dict[str, str] = Field(default_factory=dict)
+    source_dataset_toml: Optional[str] = None
+    sample_prompts: Optional[str] = None
+    preset_field_values: dict[str, str] = Field(default_factory=dict)
+    notes: str = ""
+
+
+class PromoteRunRequest(_Base):
+    """Body of ``POST /api/runs/{run_id}/promote``.
+
+    All fields are optional — sensible defaults pick "longer than the
+    search but not infinite". Empty / 0 / None ``max_steps`` defaults to
+    2000 (~7× a typical search run).
+    """
+
+    output_dir: Optional[str] = None       # default: <session>/promoted/<run_id>
+    max_steps: int = 2000
+    save_every_n_steps: int = 500
+    save_state: bool = True
+    sample_every_n_steps: Optional[int] = None  # None = every 500 if prompts set
+    resume_from: str = ""                  # path to previous LoRA / state dir
+    full_dataset_toml: str = ""            # override; default = session source TOML
+
+
+class PromoteRunResponse(_Base):
+    """Result of ``POST /api/runs/{run_id}/promote``."""
+
+    status: str                            # "started" | "conflict" | "bad_request"
+    message: str
+    promoted_run_id: Optional[str] = None
+    output_dir: Optional[str] = None
+
+
+class ConfigBundleOut(_Base):
+    """Result of ``GET /api/config`` — full session config + metadata.
+
+    Designed to round-trip cleanly through the React store: the
+    ``request`` field is the exact ``StartSessionRequest`` shape, and
+    ``saved_at`` lets the UI surface "imported config from 3 days ago".
+    """
+
+    bracket_version: str
+    saved_at: float
+    name: str = "bracket-session-config"
+    request: StartSessionRequest
+
+
+class ConfigImportIn(_Base):
+    """Body of ``POST /api/config/validate`` — round-trips an imported
+    config blob through Pydantic for client-side validation help."""
+
+    request: StartSessionRequest

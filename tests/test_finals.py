@@ -41,6 +41,9 @@ class _MockTrainer(Trainer):
         self, *, run_dir, config, dataset_toml, max_steps, seed,
         sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         run_dir = Path(run_dir); run_dir.mkdir(parents=True, exist_ok=True)
         target = config.target_loss   # type: ignore[attr-defined]

@@ -4,17 +4,21 @@
 
 import type {
 	CandidateRow,
+	ConfigBundle,
 	GalleryGroup,
 	HealthPayload,
 	JudgeStatus,
 	ModelFamily,
 	MonitorSnapshot,
 	Preset,
+	PromoteRunRequest,
+	PromoteRunResponse,
 	ReportPayload,
 	RunDetail,
 	StartSessionRequest,
 	StartSessionResponse,
 	StopSessionResponse,
+	TrainingConfigExport,
 	TrainingType,
 	TriggerUpdateResponse,
 	UpdateStatus,
@@ -121,6 +125,26 @@ export const api = {
 	listRuns: (): Promise<CandidateRow[]> => request("/api/runs"),
 	getRun: (runId: string): Promise<RunDetail> =>
 		request(`/api/runs/${encodeURIComponent(runId)}`),
+	exportTrainingConfig: (runId: string): Promise<TrainingConfigExport> =>
+		request(`/api/runs/${encodeURIComponent(runId)}/training-config`),
+	promoteRun: (
+		runId: string,
+		body: PromoteRunRequest,
+	): Promise<PromoteRunResponse> =>
+		request(
+			`/api/runs/${encodeURIComponent(runId)}/promote`,
+			{ method: "POST", body: JSON.stringify(body) },
+			{ acceptStatuses: [400, 404, 409] },
+		),
+
+	// Config import / export.
+	exportConfig: (): Promise<ConfigBundle> =>
+		request("/api/config", {}, { acceptStatuses: [404] }),
+	validateConfig: (bundle: { request: StartSessionRequest }): Promise<ConfigBundle> =>
+		request(
+			"/api/config/validate",
+			{ method: "POST", body: JSON.stringify(bundle) },
+		),
 
 	// Gallery.
 	getGallery: (): Promise<GalleryGroup[]> => request("/api/gallery"),

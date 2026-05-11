@@ -203,6 +203,156 @@ def test_judge_status_when_idle(client: TestClient) -> None:
     assert "summary" in body
 
 
+# ───────────────────────────── promote / config export ─────────────────────────────
+
+
+def _write_session_meta(out: Path, **overrides) -> None:
+    """Write a minimal ``session.json`` so promote/export endpoints have
+    the metadata they need to reconstruct the original request."""
+
+    import json
+    req = {
+        "family": "SDXL", "training_type": "LoRA",
+        "dataset_toml": "/tmp/dataset.toml", "output_dir": str(out),
+        "sample_prompts": "/tmp/prompts.txt", "resume": "",
+        "images_per_dataset": 12, "vram_gb": None,
+        "budget": 8, "max_steps": 300, "wall_secs": 1800, "seeds": 1,
+        "search_method": "optuna", "optuna_startup": 5, "n_curated": -1,
+        "finals_top_k": 0, "finals_max_steps": 2000, "finals_seeds": 2,
+        "judge_method": "none", "judge_base_url": "http://localhost:1234/v1",
+        "judge_model": "qwen2.5-vl",
+        "judge_loss_weight": 0.3, "judge_sample_weight": 0.7,
+        "judge_disable_thinking": False,
+        "preset_field_values": {},
+    }
+    req.update(overrides)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "session.json").write_text(
+        json.dumps({
+            "request": req,
+            "source_dataset_toml": req["dataset_toml"],
+            "subset_dataset_toml": str(out / "subset" / "dataset.toml"),
+            "started_at": 1234567890.0,
+        }),
+        encoding="utf-8",
+    )
+
+
+def _write_ledger_with_one_candidate(out: Path, run_id: str, score: float) -> None:
+    import json
+    (out / "ledger.jsonl").write_text(
+        json.dumps({
+            "run_id": run_id, "role": "candidate", "config_id": "cfg-001",
+            "config": {"learning_rate": 5e-06, "optimizer_type": "Adafactor"},
+            "seed": 42, "seed_idx": 0, "score": score,
+            "score_components": {}, "judge_report": None,
+            "n_steps": 300, "duration_s": 60.0, "exit_code": 0,
+            "killed_by_timeout": False, "error": None, "disqualified": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_training_config_export_returns_candidate_config(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    """The export endpoint must surface the candidate's config plus the
+    session-level source dataset path, so users can promote later."""
+
+    fresh_session.state.output_dir = tmp_path
+    _write_session_meta(tmp_path)
+    _write_ledger_with_one_candidate(tmp_path, "cand-007", 0.42)
+
+    res = client.get("/api/runs/cand-007/training-config")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["run_id"] == "cand-007"
+    assert body["family"] == "SDXL"
+    assert body["training_type"] == "LoRA"
+    assert body["score"] == 0.42
+    assert "learning_rate" in body["config"]
+    assert body["source_dataset_toml"] == "/tmp/dataset.toml"
+    assert body["sample_prompts"] == "/tmp/prompts.txt"
+
+
+def test_training_config_export_returns_404_for_unknown_run(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    fresh_session.state.output_dir = tmp_path
+    (tmp_path / "ledger.jsonl").write_text("", encoding="utf-8")
+    res = client.get("/api/runs/never-existed/training-config")
+    assert res.status_code == 404
+
+
+def test_config_export_returns_full_request(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    fresh_session.state.output_dir = tmp_path
+    _write_session_meta(tmp_path, budget=16, seeds=2)
+    res = client.get("/api/config")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["request"]["budget"] == 16
+    assert body["request"]["seeds"] == 2
+    assert body["bracket_version"]
+
+
+def test_config_validate_round_trips_request(client: TestClient) -> None:
+    """POST /api/config/validate validates an imported config blob via
+    Pydantic so the UI surfaces field-level errors at import time."""
+
+    payload = {
+        "request": {
+            "family": "Z-Image", "training_type": "Full FT",
+            "dataset_toml": "/x", "output_dir": "/y",
+            "sample_prompts": "", "resume": "",
+            "images_per_dataset": 8, "vram_gb": None,
+            "budget": 4, "max_steps": 100, "wall_secs": 600, "seeds": 1,
+            "search_method": "optuna", "optuna_startup": 5, "n_curated": -1,
+            "finals_top_k": 0, "finals_max_steps": 2000, "finals_seeds": 2,
+            "judge_method": "none", "judge_base_url": "http://localhost:1234/v1",
+            "judge_model": "qwen2.5-vl",
+            "judge_loss_weight": 0.3, "judge_sample_weight": 0.7,
+            "judge_disable_thinking": False,
+            "preset_field_values": {},
+        },
+    }
+    res = client.post("/api/config/validate", json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["request"]["family"] == "Z-Image"
+
+
+def test_promote_endpoint_404_when_run_missing(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    fresh_session.state.output_dir = tmp_path
+    _write_session_meta(tmp_path)
+    (tmp_path / "ledger.jsonl").write_text("", encoding="utf-8")
+    res = client.post("/api/runs/nonexistent/promote", json={
+        "max_steps": 1000, "save_every_n_steps": 200,
+        "save_state": True, "sample_every_n_steps": None,
+        "resume_from": "", "full_dataset_toml": "",
+    })
+    assert res.status_code == 404
+
+
+def test_promote_endpoint_409_when_session_already_running(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fresh_session.state.output_dir = tmp_path
+    _write_session_meta(tmp_path)
+    _write_ledger_with_one_candidate(tmp_path, "cand-001", 0.5)
+    monkeypatch.setattr(fresh_session, "is_running", lambda: True)
+    res = client.post("/api/runs/cand-001/promote", json={
+        "max_steps": 1000, "save_every_n_steps": 200,
+        "save_state": True, "sample_every_n_steps": None,
+        "resume_from": "", "full_dataset_toml": "",
+    })
+    assert res.status_code == 409
+
+
 # ───────────────────────────── static file traversal ─────────────────────────────
 
 

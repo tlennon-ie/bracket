@@ -169,6 +169,43 @@ export interface StopSessionResponse {
 	message: string;
 }
 
+export interface TrainingConfigExport {
+	run_id: string;
+	role: string;
+	family: string;
+	training_type: string;
+	score: number | null;
+	config: Record<string, string>;
+	source_dataset_toml: string | null;
+	sample_prompts: string | null;
+	preset_field_values: Record<string, string>;
+	notes: string;
+}
+
+export interface PromoteRunRequest {
+	output_dir?: string;
+	max_steps: number;
+	save_every_n_steps: number;
+	save_state: boolean;
+	sample_every_n_steps: number | null;
+	resume_from: string;
+	full_dataset_toml: string;
+}
+
+export interface PromoteRunResponse {
+	status: "started" | "conflict" | "bad_request" | string;
+	message: string;
+	promoted_run_id: string | null;
+	output_dir: string | null;
+}
+
+export interface ConfigBundle {
+	bracket_version: string;
+	saved_at: number;
+	name: string;
+	request: StartSessionRequest;
+}
+
 export interface UpdateStatus {
 	current_version: string;
 	latest_version: string | null;

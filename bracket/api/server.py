@@ -45,6 +45,8 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from bracket import __version__
 from bracket.api.schemas import (
     CandidateRowOut,
+    ConfigBundleOut,
+    ConfigImportIn,
     FieldSpecOut,
     GalleryGroupOut,
     GalleryItemOut,
@@ -54,11 +56,14 @@ from bracket.api.schemas import (
     ModelFamilyOut,
     MonitorSnapshotOut,
     PresetOut,
+    PromoteRunRequest,
+    PromoteRunResponse,
     ReportOut,
     RunDetailOut,
     StartSessionRequest,
     StartSessionResponse,
     StopSessionResponse,
+    TrainingConfigExportOut,
     TrainingTypeOut,
     TriggerUpdateOut,
     UpdateStatusOut,
@@ -116,6 +121,25 @@ _VALID_FILE_SUFFIXES = frozenset({
     ".mp4", ".webm", ".mov", ".mkv",
     ".txt", ".log", ".md", ".json",
 })
+
+
+def _read_session_meta(output_dir: Path) -> dict[str, object]:
+    """Read ``<output_dir>/session.json`` written by /session/start.
+
+    Returns an empty dict if the file is missing or malformed; callers
+    handle the empty case (typically meaning the session was started
+    before this metadata was persisted).
+    """
+
+    meta_path = output_dir / "session.json"
+    if not meta_path.is_file():
+        return {}
+    try:
+        import json
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        logger.warning("could not read session.json at %s: %s", meta_path, e)
+        return {}
 
 
 def _field_spec_to_out(f: FieldSpec) -> FieldSpecOut:
@@ -366,10 +390,31 @@ def _start_session_impl(
     # snapshot message so users who Stop early don't see a misleading
     # "not configured" warning.
     judge_configured = judge is not None and sp is not None
+
+    # Persist the full request to <output_dir>/session.json so the
+    # promote/export flows survive a server restart (they need the
+    # original dataset_toml + sample_prompts paths to build full
+    # training runs from search candidates).
+    source_toml_path = Path(req.dataset_toml).expanduser().resolve()
+    try:
+        import json
+        (out / "session.json").write_text(
+            json.dumps({
+                "request": req.model_dump(),
+                "source_dataset_toml": str(source_toml_path),
+                "subset_dataset_toml": str(subset_toml),
+                "started_at": time.time(),
+            }, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as e:  # noqa: BLE001 - best effort; never block start
+        logger.warning("could not persist session.json: %s", e)
+
     session.start(
         run_fn, finals_fn=finals_fn, output_dir=out,
         total_runs_target=total_target,
         judge_configured=judge_configured,
+        source_dataset_toml=source_toml_path,
     )
 
     return StartSessionResponse(
@@ -555,6 +600,284 @@ def _make_router() -> APIRouter:
         if ls is None:
             return LossSeriesOut()
         return LossSeriesOut(steps=list(ls.steps), raw=list(ls.raw), smoothed=list(ls.smoothed))
+
+    # ── training-config export / promote ──
+
+    @router.get(
+        "/runs/{run_id}/training-config",
+        response_model=TrainingConfigExportOut,
+    )
+    def export_training_config(run_id: str) -> TrainingConfigExportOut:
+        """Return everything needed to reproduce or promote a search
+        candidate as a full training run.
+
+        Bundles the candidate's hyperparameters with the session-level
+        source paths (full ``dataset_toml`` and ``sample_prompts``) and
+        the original preset field values. The React UI offers this as a
+        per-row "Export" button so users can save the winning config.
+        """
+
+        out_dir = get_session().snapshot().output_dir
+        if out_dir is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No session has been started yet.",
+            )
+        rows = read_ledger(Path(out_dir) / "ledger.jsonl")
+        match = next((r for r in rows if r.get("run_id") == run_id), None)
+        if match is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown run_id: {run_id}",
+            )
+
+        meta = _read_session_meta(Path(out_dir))
+        request: dict[str, object] = (meta.get("request") or {})  # type: ignore[assignment]
+        cfg_raw = match.get("config") or {}
+        score_val = match.get("score")
+        if isinstance(score_val, str):
+            score_val = None
+        return TrainingConfigExportOut(
+            run_id=str(match.get("run_id", "")),
+            role=str(match.get("role", "")),
+            family=str(request.get("family", "") or ""),
+            training_type=str(request.get("training_type", "") or ""),
+            score=float(score_val) if isinstance(score_val, (int, float)) else None,
+            config={str(k): str(v) for k, v in cfg_raw.items()},
+            source_dataset_toml=str(meta.get("source_dataset_toml") or "") or None,
+            sample_prompts=str(request.get("sample_prompts", "") or "") or None,
+            preset_field_values={
+                str(k): str(v)
+                for k, v in (request.get("preset_field_values") or {}).items()
+            },
+            notes=(
+                "Use this with /api/runs/{run_id}/promote to start a full "
+                "training run, or paste the values into the Setup tab "
+                "manually."
+            ),
+        )
+
+    # ── config import / export ──
+
+    @router.get("/config", response_model=ConfigBundleOut)
+    def export_config() -> ConfigBundleOut:
+        """Return the current session's full ``StartSessionRequest`` plus
+        a small metadata envelope. The React UI offers this as
+        "Export config" so the user can save / share / version-control
+        a full bracket setup."""
+
+        out_dir = get_session().snapshot().output_dir
+        if out_dir is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No session config saved yet. Start a session first.",
+            )
+        meta = _read_session_meta(Path(out_dir))
+        req_dict = meta.get("request") or {}
+        try:
+            req = StartSessionRequest(**req_dict)  # type: ignore[arg-type]
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"session.json is malformed: {type(e).__name__}: {e}",
+            ) from e
+        return ConfigBundleOut(
+            bracket_version=__version__,
+            saved_at=float(meta.get("started_at") or time.time()),
+            request=req,
+        )
+
+    @router.post(
+        "/runs/{run_id}/promote",
+        response_model=PromoteRunResponse,
+        responses={
+            409: {"model": PromoteRunResponse},
+            400: {"model": PromoteRunResponse},
+            404: {"model": PromoteRunResponse},
+        },
+    )
+    def promote_run(run_id: str, req: PromoteRunRequest) -> Response:
+        """Start a full training run using a search candidate's
+        hyperparameters.
+
+        - Skips the search-time dataset subset; uses the original
+          ``dataset_toml`` from the session metadata (or an explicit
+          override in the request body).
+        - Records the row in the same ledger with ``role="promoted"``.
+        - Replaces the active session — only one OrchestrationSession
+          runs at a time. Caller should ensure the current session is
+          stopped or done before promoting.
+        """
+
+        session = get_session()
+        if session.is_running():
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="conflict",
+                    message="A session is already running. Stop it before promoting.",
+                ).model_dump(),
+                status_code=409,
+            )
+
+        out_dir = session.snapshot().output_dir
+        if out_dir is None:
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message="No session loaded — cannot resolve the source run.",
+                ).model_dump(),
+                status_code=400,
+            )
+
+        rows = read_ledger(Path(out_dir) / "ledger.jsonl")
+        source_row = next((r for r in rows if r.get("run_id") == run_id), None)
+        if source_row is None:
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=f"Unknown source run: {run_id}",
+                ).model_dump(),
+                status_code=404,
+            )
+
+        meta = _read_session_meta(Path(out_dir))
+        request_dict: dict[str, object] = (meta.get("request") or {})  # type: ignore[assignment]
+        if not request_dict:
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=(
+                        "session.json is missing — cannot resolve trainer / "
+                        "weights / source dataset. Start the original session "
+                        "from a recent Bracket build first."
+                    ),
+                ).model_dump(),
+                status_code=400,
+            )
+
+        try:
+            orig_req = StartSessionRequest(**request_dict)  # type: ignore[arg-type]
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=f"session.json is malformed: {type(e).__name__}: {e}",
+                ).model_dump(),
+                status_code=400,
+            )
+
+        preset = get_preset(orig_req.family, orig_req.training_type)
+        if preset is None:
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=f"Unknown preset: {orig_req.family} / {orig_req.training_type}",
+                ).model_dump(),
+                status_code=400,
+            )
+
+        try:
+            trainer = preset.trainer_factory(
+                **orig_req.preset_field_values,
+                vram_gb=float(orig_req.vram_gb) if orig_req.vram_gb else None,
+            )
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=f"Trainer construction failed: {type(e).__name__}: {e}",
+                ).model_dump(),
+                status_code=400,
+            )
+
+        # Source dataset: explicit override > session metadata source toml.
+        if req.full_dataset_toml.strip():
+            source_toml = Path(req.full_dataset_toml).expanduser()
+        else:
+            source_toml = Path(str(meta.get("source_dataset_toml") or "")).expanduser()
+        if not source_toml.is_file():
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message=f"Source dataset_toml not found: {source_toml}",
+                ).model_dump(),
+                status_code=400,
+            )
+
+        sp_str = (orig_req.sample_prompts or "").strip()
+        sp = Path(sp_str).expanduser() if sp_str else None
+        judge = None
+        if orig_req.judge_method == "lmstudio" and sp is not None:
+            from bracket.judge.lmstudio import LMStudioJudge as _LMStudioJudge
+            from bracket.judge.lmstudio import LMStudioJudgeConfig as _LMStudioJudgeConfig
+            enable_thinking = False if orig_req.judge_disable_thinking else None
+            judge = _LMStudioJudge(_LMStudioJudgeConfig(
+                base_url=orig_req.judge_base_url, model=orig_req.judge_model,
+                enable_thinking=enable_thinking,
+            ))
+
+        # Output directory: explicit override (new) or session output_dir
+        # (append the promoted run inside the same session for ledger continuity).
+        promoted_out = (
+            Path(req.output_dir).expanduser().resolve()
+            if req.output_dir else Path(out_dir)
+        )
+        promoted_out.mkdir(parents=True, exist_ok=True)
+
+        resume = Path(req.resume_from).expanduser() if req.resume_from.strip() else None
+        cfg_dict = dict(source_row.get("config") or {})
+        max_steps = int(req.max_steps) if int(req.max_steps) > 0 else 2000
+
+        from bracket.orchestrator.promote import run_promoted_for_session
+
+        def promote_fn() -> OrchestrationResult:
+            return run_promoted_for_session(
+                trainer=trainer,
+                source_config=cfg_dict,
+                dataset_toml=source_toml,
+                output_dir=promoted_out,
+                max_steps=max_steps,
+                save_every_n_steps=max(1, int(req.save_every_n_steps)),
+                save_state=bool(req.save_state),
+                resume_from=resume,
+                sample_prompts=sp,
+                sample_every_n_steps=req.sample_every_n_steps,
+                sample_judge=judge,
+                loss_weight=float(orig_req.judge_loss_weight),
+                sample_weight=float(orig_req.judge_sample_weight),
+                base_run_id=run_id,
+            )
+
+        session.start(
+            promote_fn,
+            output_dir=promoted_out,
+            total_runs_target=1,
+            judge_configured=judge is not None,
+            source_dataset_toml=source_toml,
+        )
+        return JSONResponse(
+            content=PromoteRunResponse(
+                status="started",
+                message=f"Promoted run started from {run_id}.",
+                output_dir=str(promoted_out),
+            ).model_dump(),
+            status_code=200,
+        )
+
+    @router.post("/config/validate", response_model=ConfigBundleOut)
+    def validate_config(body: ConfigImportIn) -> ConfigBundleOut:
+        """Pydantic-validate an imported config bundle.
+
+        The UI can validate client-side via the OpenAPI types but this
+        endpoint is the source of truth — surfaces field-level errors
+        the same way the start endpoint would.
+        """
+
+        return ConfigBundleOut(
+            bracket_version=__version__,
+            saved_at=time.time(),
+            request=body.request,
+        )
 
     # ── gallery ──
 

@@ -58,6 +58,21 @@ def make_accelerate_launch_prefix(
     ]
 
 
+def resolve_save_every_n_steps(
+    save_every_n_steps: Optional[int], *, max_steps: int,
+) -> int:
+    """Pick the right ``--save_every_n_steps`` value.
+
+    Search runs (the default) only need a single save at the end —
+    ``max(1, max_steps)``. Promoted full-training runs pass an explicit
+    value (e.g. every 500 steps) to get intermediate checkpoints.
+    """
+
+    if save_every_n_steps and save_every_n_steps > 0:
+        return int(save_every_n_steps)
+    return max(1, int(max_steps))
+
+
 def make_subprocess_env(extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """Build a subprocess env that prevents OMP/MKL/BLAS thread storms.
 
@@ -137,6 +152,18 @@ class Trainer(ABC):
         seed: int,
         sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        # Promote-flow extensions. Defaults preserve the original search-run
+        # behavior (save only at end, no resume, no separate state dir):
+        #   - ``save_every_n_steps``: emit ``--save_every_n_steps N``;
+        #     None = use ``max_steps`` (save once at end, same as today).
+        #   - ``save_state``: emit ``--save_state`` so optimizer / RNG /
+        #     scheduler state is saved alongside weights at each
+        #     ``save_every_n_steps`` boundary (needed for resume).
+        #   - ``resume_from``: path to a previously-saved state directory
+        #     OR a LoRA checkpoint to warm-start from.
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         """Materialize all on-disk inputs and return the LaunchSpec."""
 

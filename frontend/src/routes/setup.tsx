@@ -1,4 +1,4 @@
-import { DatasetTomlDrop } from "@/components/setup/DatasetTomlDrop";
+import { ConfigLoadDrop } from "@/components/setup/ConfigLoadDrop";
 import { DynamicFieldList } from "@/components/setup/DynamicFieldList";
 import { ModelFamilyPicker } from "@/components/setup/ModelFamilyPicker";
 import { Badge } from "@/components/ui/badge";
@@ -142,16 +142,18 @@ function SetupPage() {
 				</>
 			)}
 
+			<ConfigLoadDrop />
+
 			<Card>
 				<CardHeader>
 					<CardTitle>Dataset & session</CardTitle>
 					<CardDescription>
-						Drop a TOML to preview. Type the path the backend should read from
-						below.
+						Type the dataset_toml path the backend should read from. Use the
+						"Load config" drop above to populate every field on this page
+						from a saved JSON bundle.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<DatasetTomlDrop />
 
 					<div className="grid gap-4">
 						<FieldRow label="Dataset config TOML *" htmlFor="dataset_toml">

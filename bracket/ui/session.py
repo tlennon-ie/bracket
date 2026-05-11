@@ -45,6 +45,11 @@ class SessionState:
     # sample_prompts). Persists for the session's lifetime so a Stop
     # before the first scored run still surfaces the right message.
     judge_configured: bool = False
+    # The original (full) dataset_toml path passed to /session/start.
+    # Different from `output_dir/subset/dataset.toml` which is the
+    # auto-subset used for short search runs. Needed by the "promote"
+    # flow so a full training run uses the full dataset.
+    source_dataset_toml: Optional[Path] = None
 
     def elapsed_s(self) -> float:
         if self.started_at is None:
@@ -134,6 +139,7 @@ class OrchestrationSession:
         output_dir: Path,
         total_runs_target: int,
         judge_configured: bool = False,
+        source_dataset_toml: Optional[Path] = None,
     ) -> None:
         if self.is_running():
             raise RuntimeError("session already running")
@@ -144,6 +150,7 @@ class OrchestrationSession:
                 status="running", started_at=time.time(),
                 output_dir=Path(output_dir), total_runs_target=total_runs_target,
                 judge_configured=judge_configured,
+                source_dataset_toml=Path(source_dataset_toml) if source_dataset_toml else None,
             )
             handler = _StateLogHandler(self.state, self._lock)
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -196,4 +203,5 @@ class OrchestrationSession:
                 result=self.state.result,
                 finals_started=self.state.finals_started,
                 judge_configured=self.state.judge_configured,
+                source_dataset_toml=self.state.source_dataset_toml,
             )

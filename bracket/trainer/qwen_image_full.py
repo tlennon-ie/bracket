@@ -26,7 +26,7 @@ from bracket.search.space import (
 )
 from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
-    make_accelerate_launch_prefix, make_subprocess_env,
+    make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
 )
 
 
@@ -179,6 +179,9 @@ class QwenImageFullTrainer(Trainer):
         seed: int,
         sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         if not isinstance(config, QwenImageFullConfig):
             raise TypeError(f"expected QwenImageFullConfig, got {type(config).__name__}")
@@ -224,7 +227,7 @@ class QwenImageFullTrainer(Trainer):
             "--discrete_flow_shift", f"{config.discrete_flow_shift:.4f}",
             "--max_data_loader_n_workers", str(MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]),
             "--persistent_data_loader_workers",
-            "--save_every_n_steps", str(max(1, max_steps)),
+            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
             "--no_metadata",
             "--mem_eff_save",
         ]
@@ -244,6 +247,11 @@ class QwenImageFullTrainer(Trainer):
                 "--sample_prompts", str(sample_prompts),
                 "--sample_every_n_steps", str(sample_every_n_steps),
             ]
+        if save_state:
+            cmd.append("--save_state")
+        if resume_from is not None:
+            cmd += ["--resume", str(resume_from)]
+
         return LaunchSpec(
             cmd=cmd, cwd=self.musubi_dir, env=make_subprocess_env(),
             output_dir=output_dir, logging_dir=logging_dir,

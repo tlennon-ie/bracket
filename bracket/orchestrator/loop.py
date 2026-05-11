@@ -61,6 +61,10 @@ def _execute_one(
     sample_prompts: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     judge_prompts: Optional[list[str]] = None,
+    # Promote-flow extensions (default to current search-run behaviour).
+    save_every_n_steps: Optional[int] = None,
+    save_state: bool = False,
+    resume_from: Optional[Path] = None,
 ) -> tuple[RunResult, ScoreReport]:
     spec = trainer.prepare_run(
         run_dir=run_dir,
@@ -70,6 +74,9 @@ def _execute_one(
         seed=seed,
         sample_prompts=sample_prompts,
         sample_every_n_steps=sample_every_n_steps,
+        save_every_n_steps=save_every_n_steps,
+        save_state=save_state,
+        resume_from=resume_from,
     )
     log_path = run_dir / "logs" / "stdout.log"
     result = launcher.launch(run_id, spec, log_path)

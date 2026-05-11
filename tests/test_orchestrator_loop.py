@@ -61,6 +61,9 @@ class MockTrainer(Trainer):
         self, *, run_dir: Path, config: TrainerConfig, dataset_toml: Path,
         max_steps: int, seed: int, sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         self.calls += 1
         run_dir = Path(run_dir)

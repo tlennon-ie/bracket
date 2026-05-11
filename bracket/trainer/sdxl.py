@@ -17,7 +17,7 @@ from typing import Any, Mapping, Optional
 
 from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
-    make_accelerate_launch_prefix, make_subprocess_env,
+    make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
 )
 from bracket.search.space import (
     CategoricalKnob,
@@ -207,6 +207,9 @@ class SDXLTrainer(Trainer):
         seed: int,
         sample_prompts: Optional[Path] = None,
         sample_every_n_steps: Optional[int] = None,
+        save_every_n_steps: Optional[int] = None,
+        save_state: bool = False,
+        resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
         if not isinstance(config, SDXLConfig):
             raise TypeError(f"expected SDXLConfig, got {type(config).__name__}")
@@ -255,7 +258,7 @@ class SDXLTrainer(Trainer):
             # No checkpoints written mid-run — orchestrator scores from tfevents,
             # we don't keep weights for losers.
             "--no_metadata",
-            "--save_every_n_steps", str(max(1, max_steps)),  # only at end
+            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),  # only at end
             "--max_data_loader_n_workers", str(config.dataloader_workers),
             "--persistent_data_loader_workers",
         ]
@@ -276,6 +279,11 @@ class SDXLTrainer(Trainer):
                 "--sample_every_n_steps", str(sample_every_n_steps),
                 "--sample_sampler", "euler_a",
             ]
+
+        if save_state:
+            cmd.append("--save_state")
+        if resume_from is not None:
+            cmd += ["--resume", str(resume_from)]
 
         return LaunchSpec(
             cmd=cmd,
