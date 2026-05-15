@@ -31,6 +31,39 @@ function Write-FailExit($msg) {
     exit 1
 }
 
+# Refresh a single KEY=value line in an existing .env file. No-op if
+# the current value already matches $Want; otherwise replaces in place
+# (or appends if the key is missing). Used to migrate stale trainer
+# paths from older install layouts (legacy %LOCALAPPDATA%\bracket\trainers)
+# to the in-repo vendor\ submodules without touching unrelated keys
+# such as user model paths.
+function Refresh-EnvPath {
+    param([string]$Key, [string]$Want, [string]$File)
+    $lines = Get-Content -LiteralPath $File
+    $cur = $null
+    foreach ($line in $lines) {
+        if ($line -match "^$([regex]::Escape($Key))=(.*)$") { $cur = $Matches[1] }
+    }
+    if ($cur -eq $Want) { return }
+    $replaced = $false
+    $newLines = @()
+    foreach ($line in $lines) {
+        if ($line -match "^$([regex]::Escape($Key))=") {
+            $newLines += "$Key=$Want"
+            $replaced = $true
+        } else {
+            $newLines += $line
+        }
+    }
+    if (-not $replaced) { $newLines += "$Key=$Want" }
+    Set-Content -LiteralPath $File -Value $newLines -Encoding utf8
+    if ($cur) {
+        Write-Ok "Refreshed $Key in .env (was: $cur)"
+    } else {
+        Write-Ok "Added $Key=$Want to .env"
+    }
+}
+
 # --- 1. Python ---------------------------------------------------------
 Write-Step "Checking Python"
 $python = Get-Command python -ErrorAction SilentlyContinue
@@ -242,7 +275,13 @@ $lmsLine
     Set-Content -Path $envFile -Value $envBody -Encoding utf8
     Write-Ok "Wrote .env"
 } else {
-    Write-Ok ".env already exists -- leaving alone"
+    Write-Ok ".env already exists -- refreshing stale trainer paths"
+    # Only the three trainer-pointing keys are touched. Model-weight
+    # paths (BRACKET_SDXL_PRETRAINED, BRACKET_FLUX1_DIT_PATH, etc.) and
+    # any comments are preserved as-is.
+    if (Test-Path $TrainerVenv)  { Refresh-EnvPath BRACKET_VENV_PYTHON    $trainerPython $envFile }
+    if (Test-Path $musubiDir)    { Refresh-EnvPath BRACKET_MUSUBI_DIR     $musubiDir     $envFile }
+    if (Test-Path $sdScriptsDir) { Refresh-EnvPath BRACKET_SD_SCRIPTS_DIR $sdScriptsDir  $envFile }
 }
 
 Write-Host ""

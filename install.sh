@@ -171,6 +171,33 @@ ok "Trainer deps installed (musubi_tuner importable)"
 
 deactivate
 
+# Refresh a single KEY=value line in an existing .env file. No-op if
+# the current value already matches $want; otherwise replaces in place
+# (or appends if the key is missing). Used to migrate stale trainer
+# paths from older install layouts (e.g. legacy ~/.cache/bracket/trainers
+# / %LOCALAPPDATA%\bracket\trainers) to the in-repo vendor/ submodules
+# without touching unrelated keys such as user model paths.
+refresh_env_path() {
+    local key="$1" want="$2" file="$3"
+    local cur=""
+    cur=$(grep -E "^${key}=" "$file" | tail -1 | sed -E "s|^${key}=||" || true)
+    if [ "$cur" = "$want" ]; then return 0; fi
+    if grep -qE "^${key}=" "$file"; then
+        local tmp="${file}.tmp.$$"
+        awk -v k="$key" -v v="$want" '
+            $0 ~ "^"k"=" {print k"="v; next}
+            {print}
+        ' "$file" > "$tmp" && mv "$tmp" "$file"
+    else
+        printf "%s=%s\n" "$key" "$want" >> "$file"
+    fi
+    if [ -n "$cur" ]; then
+        ok "Refreshed $key in .env (was: $cur)"
+    else
+        ok "Added $key=$want to .env"
+    fi
+}
+
 # ─── 7. .env defaults ──────────────────────────────────────────────
 step "Writing .env defaults"
 ENV_FILE="$REPO_ROOT/.env"
@@ -252,7 +279,13 @@ $lms_line
 EOF
     ok "Wrote .env"
 else
-    ok ".env already exists — leaving alone"
+    ok ".env already exists — refreshing stale trainer paths"
+    # Only the three trainer-pointing keys are touched. Model-weight
+    # paths (BRACKET_SDXL_PRETRAINED, BRACKET_FLUX1_DIT_PATH, etc.) and
+    # any comments are preserved as-is.
+    [ -d "$TRAINER_VENV"  ] && refresh_env_path BRACKET_VENV_PYTHON    "$TRAINER_VENV/bin/python" "$ENV_FILE"
+    [ -d "$MUSUBI_DIR"    ] && refresh_env_path BRACKET_MUSUBI_DIR     "$MUSUBI_DIR"              "$ENV_FILE"
+    [ -d "$SD_SCRIPTS_DIR" ] && refresh_env_path BRACKET_SD_SCRIPTS_DIR "$SD_SCRIPTS_DIR"         "$ENV_FILE"
 fi
 
 echo
