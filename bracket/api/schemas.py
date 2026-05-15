@@ -255,6 +255,23 @@ class RunDetailOut(_Base):
     sample_dir: Optional[str] = None
 
 
+class RunLogChunkOut(_Base):
+    """A slice of a run's stdout.log, returned by ``GET /api/runs/{run_id}/log``.
+
+    Clients poll with ``offset=next_offset`` from the previous response to
+    receive only new bytes. ``content`` may be empty (no new bytes since
+    last poll). If the file shrinks (``total_size < requested_offset``) the
+    client should reset its accumulated text and retry with ``offset=0``.
+    """
+
+    exists: bool
+    content: str
+    offset: int
+    next_offset: int
+    total_size: int
+    truncated_to_tail: bool
+
+
 class ReportOut(_Base):
     path: str
     content: str

@@ -84,6 +84,53 @@ def test_smoothed_loss_dampens_oscillation():
         assert 0.32 < last_smoothed < 0.35  # converged near mean
 
 
+def _make_sd_scripts_event_file(tmp: Path, n_steps: int = 10) -> str:
+    """Emulate sd-scripts' tensorboard output: loss/average instead of
+    loss/current, and lr/textencoder instead of lr/unet."""
+    writer = EventFileWriter(str(tmp), max_queue_size=1024, flush_secs=0)
+    base = time.time()
+    for step in range(1, n_steps + 1):
+        _write_scalar(writer, "loss/average", 0.4 - 0.001 * step, step, base + step * 0.1)
+        _write_scalar(writer, "lr/textencoder", 5e-6, step, base + step * 0.1)
+    writer.close()
+    files = sorted(p for p in tmp.glob("events.out.tfevents.*"))
+    assert files
+    return str(files[-1])
+
+
+def test_drain_uses_sd_scripts_tags_when_present():
+    """sd-scripts (SDXL / Flux.1 LoRA / SD3.5 / Lumina) writes loss/average
+    rather than musubi-tuner's loss/current. Regression test: the reader
+    must fall through to the sd-scripts tag without explicit configuration,
+    otherwise SDXL training shows no loss on the Monitor page and ledger
+    rows get disqualified as ``empty_tfevents``."""
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_sd_scripts_event_file(Path(td), n_steps=20)
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(event_path=path, on_frame=seen.append, ema_alpha=0.1)
+        n = tail.drain_once()
+        assert n == 20
+        assert [f.step for f in seen] == list(range(1, 21))
+        # LR was emitted under the sd-scripts tag name too.
+        assert all(f.lr == pytest.approx(5e-6) for f in seen)
+
+
+def test_explicit_string_loss_tag_still_works():
+    """Back-compat: callers that previously passed loss_tag="loss/current"
+    explicitly must keep working."""
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_event_file(Path(td), n_steps=5)
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(
+            event_path=path,
+            on_frame=seen.append,
+            loss_tag="loss/current",
+            lr_tag="lr/unet",
+            ema_alpha=0.1,
+        )
+        assert tail.drain_once() == 5
+
+
 def test_missing_event_file_raises():
     with pytest.raises(FileNotFoundError):
         TFEventsTail(event_path="/nonexistent/path", on_frame=lambda f: None)

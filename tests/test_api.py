@@ -178,6 +178,73 @@ def test_run_detail_for_unknown_run_after_session_setup(
     assert res.status_code == 404
 
 
+# ───────────────────────────── run log ─────────────────────────────
+
+
+def test_run_log_when_idle_returns_empty_payload(client: TestClient) -> None:
+    """No session yet → 200 with exists=False rather than 404, so the UI
+    can poll harmlessly without dropping into a toasted error path."""
+
+    res = client.get("/api/runs/cand-007/log")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["exists"] is False
+    assert body["content"] == ""
+    assert body["total_size"] == 0
+
+
+def test_run_log_streams_appending_content(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    """End-to-end: write to a log file, fetch with offset=0, then write
+    more and fetch again with offset=next_offset. Only the new bytes come
+    back in the second response — that's the wedge that makes the live
+    console viewer cheap to poll."""
+
+    fresh_session.state.output_dir = tmp_path
+    run_id = "cand-log-test"
+    log_dir = tmp_path / "runs" / run_id / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "stdout.log"
+    log_path.write_bytes(b"caching latents\n")
+
+    first = client.get(f"/api/runs/{run_id}/log").json()
+    assert first["exists"] is True
+    assert first["content"] == "caching latents\n"
+    assert first["offset"] == 0
+    assert first["next_offset"] == 16
+    assert first["total_size"] == 16
+
+    # Append more — the second poll should return only the new bytes.
+    with log_path.open("ab") as f:
+        f.write(b"step 1/200\n")
+    second = client.get(
+        f"/api/runs/{run_id}/log?offset={first['next_offset']}",
+    ).json()
+    assert second["content"] == "step 1/200\n"
+    assert second["offset"] == 16
+    assert second["next_offset"] == 27
+
+
+def test_run_log_handles_truncation_via_offset_reset(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    """If the file shrinks (rotated / truncated), the server falls back to
+    offset=0 rather than returning a confusing partial chunk."""
+
+    fresh_session.state.output_dir = tmp_path
+    run_id = "cand-trunc"
+    log_dir = tmp_path / "runs" / run_id / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "stdout.log"
+    log_path.write_bytes(b"a" * 1000)
+
+    res = client.get(f"/api/runs/{run_id}/log?offset=5000").json()
+    # offset > size → server resets to 0 and serves the whole file
+    assert res["offset"] == 0
+    assert len(res["content"]) == 1000
+
+
 # ───────────────────────────── gallery + report ─────────────────────────────
 
 

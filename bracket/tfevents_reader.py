@@ -32,9 +32,16 @@ from bracket.frame import LossFrame
 
 logger = logging.getLogger(__name__)
 
-# Tag the trainer emits per step. Confirmed against a real 8000-step run.
+# Per-step scalar tag the trainer emits. Different trainers use different
+# tag names — musubi-tuner (Z-Image / Flux / Wan / Hunyuan / Qwen-Image)
+# writes "loss/current"; sd-scripts (SDXL / Flux.1 LoRA / Lumina / Anima
+# / SD3.5) writes "loss/average". We try each candidate and use the first
+# one present in the file. ``LOSS_TAG`` stays as a single-string public
+# constant for backwards compatibility with old callers.
 LOSS_TAG = "loss/current"
+LOSS_TAG_CANDIDATES: tuple[str, ...] = ("loss/current", "loss/average")
 LR_TAG = "lr/unet"
+LR_TAG_CANDIDATES: tuple[str, ...] = ("lr/unet", "lr/textencoder")
 
 
 def scalar_tags_in(event_path: str) -> list[str]:
@@ -62,16 +69,16 @@ class TFEventsTail:
         *,
         poll_interval_s: float = 1.0,
         ema_alpha: float = 0.05,
-        loss_tag: str = LOSS_TAG,
-        lr_tag: str = LR_TAG,
+        loss_tag: str | tuple[str, ...] = LOSS_TAG_CANDIDATES,
+        lr_tag: str | tuple[str, ...] = LR_TAG_CANDIDATES,
     ) -> None:
         if not os.path.exists(event_path):
             raise FileNotFoundError(event_path)
         self._event_path = event_path
         self._on_frame = on_frame
         self._poll_interval_s = poll_interval_s
-        self._loss_tag = loss_tag
-        self._lr_tag = lr_tag
+        self._loss_tag_candidates = (loss_tag,) if isinstance(loss_tag, str) else loss_tag
+        self._lr_tag_candidates = (lr_tag,) if isinstance(lr_tag, str) else lr_tag
         self._smoother = EMASmoother(alpha=ema_alpha)
         self._last_step_emitted = -1
         self._stop = threading.Event()
@@ -110,10 +117,12 @@ class TFEventsTail:
 
     def _drain(self, ea: EventAccumulator) -> int:
         tags = ea.Tags()["scalars"]
-        if self._loss_tag not in tags:
+        loss_tag = next((t for t in self._loss_tag_candidates if t in tags), None)
+        if loss_tag is None:
             return 0
-        loss_events = ea.Scalars(self._loss_tag)
-        lr_events = {e.step: e.value for e in ea.Scalars(self._lr_tag)} if self._lr_tag in tags else {}
+        loss_events = ea.Scalars(loss_tag)
+        lr_tag = next((t for t in self._lr_tag_candidates if t in tags), None)
+        lr_events = {e.step: e.value for e in ea.Scalars(lr_tag)} if lr_tag else {}
         emitted = 0
         for ev in loss_events:
             if ev.step <= self._last_step_emitted:

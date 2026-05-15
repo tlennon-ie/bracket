@@ -113,6 +113,15 @@ export interface RunDetail {
 	sample_dir: string | null;
 }
 
+export interface RunLogChunk {
+	exists: boolean;
+	content: string;
+	offset: number;
+	next_offset: number;
+	total_size: number;
+	truncated_to_tail: boolean;
+}
+
 export interface ReportPayload {
 	path: string;
 	content: string;

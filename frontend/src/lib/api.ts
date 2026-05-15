@@ -15,6 +15,7 @@ import type {
 	PromoteRunResponse,
 	ReportPayload,
 	RunDetail,
+	RunLogChunk,
 	StartSessionRequest,
 	StartSessionResponse,
 	StopSessionResponse,
@@ -125,6 +126,16 @@ export const api = {
 	listRuns: (): Promise<CandidateRow[]> => request("/api/runs"),
 	getRun: (runId: string): Promise<RunDetail> =>
 		request(`/api/runs/${encodeURIComponent(runId)}`),
+	getRunLog: (
+		runId: string,
+		offset = 0,
+		silent = true,
+	): Promise<RunLogChunk> =>
+		request(
+			`/api/runs/${encodeURIComponent(runId)}/log?offset=${offset}`,
+			{},
+			{ silent, acceptStatuses: [404] },
+		),
 	exportTrainingConfig: (runId: string): Promise<TrainingConfigExport> =>
 		request(`/api/runs/${encodeURIComponent(runId)}/training-config`),
 	promoteRun: (

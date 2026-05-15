@@ -60,6 +60,7 @@ from bracket.api.schemas import (
     PromoteRunResponse,
     ReportOut,
     RunDetailOut,
+    RunLogChunkOut,
     StartSessionRequest,
     StartSessionResponse,
     StopSessionResponse,
@@ -569,6 +570,69 @@ def _make_router() -> APIRouter:
             run_dir=str(run_dir),
             log_path=str(log_path) if log_path.exists() else None,
             sample_dir=str(sample_dir) if sample_dir.exists() else None,
+        )
+
+    @router.get("/runs/{run_id}/log", response_model=RunLogChunkOut)
+    def run_log(
+        run_id: str,
+        offset: int = Query(default=0, ge=0),
+        max_bytes: int = Query(default=256 * 1024, ge=1024, le=1024 * 1024),
+    ) -> RunLogChunkOut:
+        """Return a chunk of the run's stdout.log starting at ``offset``.
+
+        Powers the Monitor page's live console pane. Clients pass back
+        ``next_offset`` from the previous response to fetch only the new
+        bytes. When the file is larger than ``max_bytes`` from ``offset``,
+        the response is capped to the last ``max_bytes`` of the file and
+        ``truncated_to_tail`` is set (history older than that is dropped
+        for that single poll — the next poll resumes from EOF).
+        """
+
+        out_dir = get_session().snapshot().output_dir
+        if out_dir is None:
+            return RunLogChunkOut(
+                exists=False, content="", offset=offset, next_offset=offset,
+                total_size=0, truncated_to_tail=False,
+            )
+        log_path = Path(out_dir) / "runs" / run_id / "logs" / "stdout.log"
+        if not log_path.is_file():
+            return RunLogChunkOut(
+                exists=False, content="", offset=offset, next_offset=offset,
+                total_size=0, truncated_to_tail=False,
+            )
+        try:
+            size = log_path.stat().st_size
+        except OSError:
+            return RunLogChunkOut(
+                exists=False, content="", offset=offset, next_offset=offset,
+                total_size=0, truncated_to_tail=False,
+            )
+        # File was rotated or truncated since last poll — client must reset.
+        if offset > size:
+            offset = 0
+        read_offset = offset
+        truncated_to_tail = False
+        if size - read_offset > max_bytes:
+            read_offset = size - max_bytes
+            truncated_to_tail = True
+        try:
+            with log_path.open("rb") as f:
+                f.seek(read_offset)
+                chunk = f.read(size - read_offset)
+        except OSError as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"failed reading log: {e}",
+            ) from e
+        # `errors="replace"` keeps decoding robust even when the trainer's
+        # tqdm output produces stray bytes mid-progress-bar.
+        return RunLogChunkOut(
+            exists=True,
+            content=chunk.decode("utf-8", errors="replace"),
+            offset=read_offset,
+            next_offset=size,
+            total_size=size,
+            truncated_to_tail=truncated_to_tail,
         )
 
     @router.get("/runs/{run_id}/loss", response_model=LossSeriesOut)

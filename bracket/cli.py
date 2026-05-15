@@ -25,8 +25,11 @@ def serve() -> None:
 
     tags = scalar_tags_in(args.event_path)
     print(f"Found scalar tags in event file: {tags}")
-    if "loss/current" not in tags:
-        print("WARNING: 'loss/current' tag not present — frames will not be emitted.")
+    from bracket.tfevents_reader import LOSS_TAG_CANDIDATES
+    if not any(t in tags for t in LOSS_TAG_CANDIDATES):
+        print(
+            f"WARNING: none of {LOSS_TAG_CANDIDATES} present — frames will not be emitted."
+        )
 
     app = build_app(
         event_path=args.event_path,

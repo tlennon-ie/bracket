@@ -1,3 +1,4 @@
+import { ConsoleLog } from "@/components/monitor/ConsoleLog";
 import { GalleryAccordion } from "@/components/monitor/GalleryAccordion";
 import { LossChart } from "@/components/monitor/LossChart";
 import { ProgressBar } from "@/components/monitor/ProgressBar";
@@ -161,6 +162,23 @@ function MonitorPage() {
 						series={snapshot?.current_loss ?? null}
 						isLoading={isLoading}
 					/>
+				</CardContent>
+			</Card>
+
+			{/* ── Live trainer console ────────────────────────────────────────── */}
+			<Card>
+				<CardHeader className="flex-row items-center justify-between space-y-0">
+					<div className="flex flex-col gap-0.5">
+						<CardTitle>Console</CardTitle>
+						{snapshot?.current_run_id && (
+							<code className="text-xs font-mono-tight text-muted-foreground">
+								{snapshot.current_run_id}
+							</code>
+						)}
+					</div>
+				</CardHeader>
+				<CardContent>
+					<ConsoleLog runId={snapshot?.current_run_id ?? null} />
 				</CardContent>
 			</Card>
 
