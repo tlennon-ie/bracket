@@ -87,6 +87,41 @@ def test_build_subset_seed_is_deterministic(tmp_path: Path):
     assert a == b
 
 
+def test_build_subset_full_dataset_normalises_without_copying(tmp_path: Path):
+    """images_per_dataset=0 + copy_files=False is the 'use full dataset'
+    flow: convert musubi-tuner's flat ``image_directory`` schema into
+    sd-scripts' nested ``[[datasets.subsets]].image_dir`` schema without
+    duplicating image files to a subset dir. This is the fix for sd-scripts
+    rejecting musubi-format TOMLs with 'extra keys not allowed @
+    data["datasets"][0]["image_directory"]'."""
+
+    src_root = tmp_path / "src"
+    a = _make_dummy_dataset(src_root, "class_a", 25)
+    src_toml = tmp_path / "dataset.toml"
+    src_toml.write_text(toml.dumps({
+        "general": {"resolution": [1024, 1024], "caption_extension": ".txt"},
+        "datasets": [{"image_directory": str(a), "num_repeats": 2}],
+    }), encoding="utf-8")
+    out_toml = build_subset(
+        source_toml=src_toml,
+        target_dir=tmp_path / "subset",
+        spec=DatasetSubsetSpec(
+            images_per_dataset=0, seed=0, copy_files=False,
+        ),
+    )
+    derived = toml.load(out_toml)
+    # Output uses sd-scripts schema (no top-level image_directory).
+    ds = derived["datasets"][0]
+    assert "image_directory" not in ds
+    subsets = ds["subsets"]
+    assert len(subsets) == 1
+    # No file copy: the toml points at the ORIGINAL directory.
+    image_dir = Path(subsets[0]["image_dir"])
+    assert image_dir.resolve() == a.resolve()
+    # No partial subset was written elsewhere.
+    assert not (tmp_path / "subset" / "d00_00_class_a").exists()
+
+
 def test_build_subset_missing_image_dir_raises(tmp_path: Path):
     src_toml = tmp_path / "dataset.toml"
     src_toml.write_text(toml.dumps({

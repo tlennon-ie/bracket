@@ -82,7 +82,11 @@ def _sample_images(
     candidates = sorted(p for p in src_dir.iterdir() if p.is_file() and p.suffix.lower() in exts)
     if not candidates:
         return []
-    if len(candidates) <= k:
+    # k <= 0 is the "use full dataset" signal — return every image so the
+    # caller's non-empty guard passes and the TOML it writes references the
+    # full directory. Pair this with ``DatasetSubsetSpec.copy_files=False``
+    # to avoid duplicating the source data.
+    if k <= 0 or len(candidates) <= k:
         return candidates
     return rng.sample(candidates, k)
 

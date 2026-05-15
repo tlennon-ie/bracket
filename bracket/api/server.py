@@ -320,28 +320,33 @@ def _start_session_impl(
             message=f"Trainer construction failed: {type(e).__name__}: {e}",
         )
 
-    # Subset (or full dataset). images_per_dataset <= 0 means "skip
-    # subsetting entirely and search on the full dataset" — the toml
-    # path the trainer sees is the user-supplied dataset_toml as-is.
+    # Subset (or full dataset). ``images_per_dataset <= 0`` is the
+    # "full dataset" signal — we still run build_subset() so the
+    # user-supplied TOML gets normalised into the sd-scripts schema
+    # (musubi-tuner's ``image_directory`` → sd-scripts' nested
+    # ``[[datasets.subsets]].image_dir``), but with no per-class cap
+    # and no file copy so the trainer reads from the original
+    # directories directly. Skipping this step would break sd-scripts
+    # any time the source TOML uses musubi naming.
     out = Path(req.output_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    if int(req.images_per_dataset) <= 0:
-        subset_toml = Path(req.dataset_toml).expanduser().resolve()
-    else:
-        subset_dir = out / "subset"
-        try:
-            subset_toml = build_subset(
-                source_toml=Path(req.dataset_toml).expanduser(),
-                target_dir=subset_dir,
-                spec=DatasetSubsetSpec(
-                    images_per_dataset=int(req.images_per_dataset), seed=0,
-                ),
-            )
-        except Exception as e:  # noqa: BLE001
-            return StartSessionResponse(
-                status="bad_request",
-                message=f"Dataset subset failed: {type(e).__name__}: {e}",
-            )
+    subset_dir = out / "subset"
+    full_dataset = int(req.images_per_dataset) <= 0
+    try:
+        subset_toml = build_subset(
+            source_toml=Path(req.dataset_toml).expanduser(),
+            target_dir=subset_dir,
+            spec=DatasetSubsetSpec(
+                images_per_dataset=0 if full_dataset else int(req.images_per_dataset),
+                seed=0,
+                copy_files=not full_dataset,
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        return StartSessionResponse(
+            status="bad_request",
+            message=f"Dataset subset failed: {type(e).__name__}: {e}",
+        )
 
     sp = Path(req.sample_prompts).expanduser() if req.sample_prompts.strip() else None
     sample_every = int(req.max_steps) if sp is not None else None
