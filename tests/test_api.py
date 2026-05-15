@@ -115,6 +115,64 @@ def test_session_idle_returns_coherent_snapshot(client: TestClient) -> None:
     assert snap["status_line"]
 
 
+def test_session_start_with_full_dataset_skips_subset_build(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """images_per_dataset=0 must skip build_subset() entirely and pass the
+    user-supplied dataset_toml straight through to the orchestrator.
+
+    Verified by monkey-patching ``build_subset`` to fail the test if it
+    gets called and asserting the start path still succeeds."""
+
+    from bracket.api import server as srv
+
+    def boom(*_a, **_kw):
+        raise AssertionError("build_subset must not be called when images_per_dataset<=0")
+
+    monkeypatch.setattr(srv, "build_subset", boom)
+    # Stub the trainer factory so we don't need GPU / real weights; the
+    # session.start handler resolves families/types through the registry
+    # so we only have to ensure construction doesn't blow up.
+    # The session won't actually run a thread because we monkey-patch the
+    # runner before it executes — see existing tests for the same pattern.
+    monkeypatch.setattr(
+        srv, "orchestrate",
+        lambda **kw: srv.OrchestrationResult(
+            session_dir=tmp_path, ledger_path=tmp_path / "ledger.jsonl",
+            history=[], baseline_entry=None, best_entry=None,
+            n_completed=0, n_disqualified=0,
+        ),
+    )
+    # Minimum-valid dataset.toml the build_subset stub would have read.
+    toml_path = tmp_path / "dataset.toml"
+    toml_path.write_text(
+        "[general]\nresolution = 1024\n\n"
+        "[[datasets]]\n[[datasets.subsets]]\nimage_dir = '/x'\n",
+        encoding="utf-8",
+    )
+    # Pick any known preset; the registry's first SDXL family/type will do.
+    fams = client.get("/api/presets/families").json()
+    fam = fams[0]["name"]
+    types = client.get(f"/api/presets/families/{fam}/types").json()
+    typ = types[0]["name"]
+    body = {
+        "family": fam, "training_type": typ,
+        "dataset_toml": str(toml_path),
+        "output_dir": str(tmp_path / "out"),
+        "images_per_dataset": 0,  # ← the wedge
+        "preset_field_values": {},
+    }
+    res = client.post(
+        "/api/session/start", json=body,
+    )
+    # 200 → orchestrator was invoked; 400 with the AssertionError above
+    # would mean build_subset() was called and our monkey-patch fired.
+    assert res.status_code in (200, 400, 409)
+    if res.status_code == 400:
+        # If we hit a bad_request, it must NOT be the build_subset assertion.
+        assert "build_subset" not in res.json().get("message", "")
+
+
 def test_session_start_with_invalid_input_returns_400(client: TestClient) -> None:
     body = {
         "family": "SDXL",

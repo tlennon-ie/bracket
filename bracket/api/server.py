@@ -86,6 +86,7 @@ from bracket.registry import (
 from bracket.search.controller import RandomSearch, SearchController
 from bracket import updater as bracket_updater
 from bracket.search.optuna_search import OptunaTPESearch
+from bracket.search.space import SearchOverrides
 from bracket.ui.monitor import (
     MonitorSnapshot,
     build_snapshot,
@@ -319,21 +320,28 @@ def _start_session_impl(
             message=f"Trainer construction failed: {type(e).__name__}: {e}",
         )
 
-    # Subset.
+    # Subset (or full dataset). images_per_dataset <= 0 means "skip
+    # subsetting entirely and search on the full dataset" — the toml
+    # path the trainer sees is the user-supplied dataset_toml as-is.
     out = Path(req.output_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    subset_dir = out / "subset"
-    try:
-        subset_toml = build_subset(
-            source_toml=Path(req.dataset_toml).expanduser(),
-            target_dir=subset_dir,
-            spec=DatasetSubsetSpec(images_per_dataset=int(req.images_per_dataset), seed=0),
-        )
-    except Exception as e:  # noqa: BLE001
-        return StartSessionResponse(
-            status="bad_request",
-            message=f"Dataset subset failed: {type(e).__name__}: {e}",
-        )
+    if int(req.images_per_dataset) <= 0:
+        subset_toml = Path(req.dataset_toml).expanduser().resolve()
+    else:
+        subset_dir = out / "subset"
+        try:
+            subset_toml = build_subset(
+                source_toml=Path(req.dataset_toml).expanduser(),
+                target_dir=subset_dir,
+                spec=DatasetSubsetSpec(
+                    images_per_dataset=int(req.images_per_dataset), seed=0,
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            return StartSessionResponse(
+                status="bad_request",
+                message=f"Dataset subset failed: {type(e).__name__}: {e}",
+            )
 
     sp = Path(req.sample_prompts).expanduser() if req.sample_prompts.strip() else None
     sample_every = int(req.max_steps) if sp is not None else None
@@ -356,6 +364,16 @@ def _start_session_impl(
     else:
         controller = RandomSearch(seed=0)
 
+    # User-supplied search-range overrides. The dataclass is a no-op when
+    # every field is None, so passing it unconditionally is cheap.
+    search_overrides = SearchOverrides(
+        lr_min=req.lr_min,
+        lr_max=req.lr_max,
+        batch_size_min=req.batch_size_min,
+        batch_size_max=req.batch_size_max,
+        gradient_checkpointing_mode=req.gradient_checkpointing_mode,
+    )
+
     def run_fn() -> OrchestrationResult:
         return orchestrate(
             trainer=trainer, dataset_toml=subset_toml, output_dir=out,
@@ -369,6 +387,7 @@ def _start_session_impl(
             loss_weight=float(req.judge_loss_weight),
             sample_weight=float(req.judge_sample_weight),
             stop_event=session.stop_event,
+            search_overrides=search_overrides,
         )
 
     finals_fn = None

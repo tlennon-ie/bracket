@@ -211,21 +211,44 @@ function SetupPage() {
 
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 						<FieldRow label="Subset images per dataset" htmlFor="images">
-							<div className="flex items-center gap-3">
-								<Slider
+							<div className="flex flex-col gap-2">
+								<Label className="flex items-center gap-2 normal-case tracking-normal text-xs text-muted-foreground">
+									<Checkbox
+										checked={config.images_per_dataset <= 0}
+										onCheckedChange={(checked) =>
+											setField("images_per_dataset", checked ? 0 : 12)
+										}
+									/>
+									Use full dataset (skip subsetting)
+								</Label>
+								<Input
 									id="images"
-									min={4}
-									max={64}
-									step={2}
-									value={[config.images_per_dataset]}
-									onValueChange={(v) =>
-										setField("images_per_dataset", v[0] ?? 12)
+									type="number"
+									min={1}
+									step={1}
+									disabled={config.images_per_dataset <= 0}
+									value={
+										config.images_per_dataset > 0
+											? config.images_per_dataset
+											: ""
 									}
-									className="flex-1"
+									placeholder={
+										config.images_per_dataset <= 0
+											? "full dataset"
+											: "e.g. 64"
+									}
+									onChange={(e) => {
+										const n = Number(e.target.value);
+										setField(
+											"images_per_dataset",
+											Number.isFinite(n) && n > 0 ? Math.floor(n) : 0,
+										);
+									}}
 								/>
-								<span className="font-mono-tight text-sm tabular-nums w-8 text-right">
-									{config.images_per_dataset}
-								</span>
+								<p className="text-xs text-muted-foreground">
+									Search runs on a random sample per class for speed; promoted
+									winners train on the full dataset. 0 / blank = full dataset.
+								</p>
 							</div>
 						</FieldRow>
 						<FieldRow label="VRAM override (GB)" htmlFor="vram">
@@ -245,6 +268,127 @@ function SetupPage() {
 							/>
 						</FieldRow>
 					</div>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle>Search overrides (advanced)</CardTitle>
+					<CardDescription>
+						Narrow the search bounds the trainer publishes. Leave any field
+						blank to use the trainer's VRAM-tier default. Baseline + curated
+						configs still use the trainer's pinned values — only sampled
+						candidates honour these.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<FieldRow label="Learning rate min" htmlFor="lr_min">
+							<Input
+								id="lr_min"
+								type="number"
+								step="any"
+								min={0}
+								value={config.lr_min ?? ""}
+								placeholder="trainer default"
+								onChange={(e) =>
+									setField(
+										"lr_min",
+										e.target.value === "" ? null : Number(e.target.value),
+									)
+								}
+							/>
+						</FieldRow>
+						<FieldRow label="Learning rate max" htmlFor="lr_max">
+							<Input
+								id="lr_max"
+								type="number"
+								step="any"
+								min={0}
+								value={config.lr_max ?? ""}
+								placeholder="trainer default"
+								onChange={(e) =>
+									setField(
+										"lr_max",
+										e.target.value === "" ? null : Number(e.target.value),
+									)
+								}
+							/>
+						</FieldRow>
+						<FieldRow label="Batch size min" htmlFor="bs_min">
+							<Input
+								id="bs_min"
+								type="number"
+								min={1}
+								step={1}
+								value={config.batch_size_min ?? ""}
+								placeholder="trainer default"
+								onChange={(e) =>
+									setField(
+										"batch_size_min",
+										e.target.value === ""
+											? null
+											: Math.max(1, Math.floor(Number(e.target.value))),
+									)
+								}
+							/>
+						</FieldRow>
+						<FieldRow label="Batch size max" htmlFor="bs_max">
+							<Input
+								id="bs_max"
+								type="number"
+								min={1}
+								step={1}
+								value={config.batch_size_max ?? ""}
+								placeholder="trainer default"
+								onChange={(e) =>
+									setField(
+										"batch_size_max",
+										e.target.value === ""
+											? null
+											: Math.max(1, Math.floor(Number(e.target.value))),
+									)
+								}
+							/>
+						</FieldRow>
+					</div>
+					<FieldRow
+						label="Gradient checkpointing"
+						htmlFor="gc_mode"
+					>
+						<RadioGroup
+							id="gc_mode"
+							value={config.gradient_checkpointing_mode ?? ""}
+							onValueChange={(v) =>
+								setField(
+									"gradient_checkpointing_mode",
+									(v === "" ? null : v) as
+										| "on"
+										| "off"
+										| "search"
+										| null,
+								)
+							}
+							className="grid grid-cols-2 md:grid-cols-4 gap-2"
+						>
+							<Label className="flex items-center gap-2 normal-case tracking-normal">
+								<RadioGroupItem value="" />
+								<span className="text-sm">Trainer default</span>
+							</Label>
+							<Label className="flex items-center gap-2 normal-case tracking-normal">
+								<RadioGroupItem value="on" />
+								<span className="text-sm">Force on</span>
+							</Label>
+							<Label className="flex items-center gap-2 normal-case tracking-normal">
+								<RadioGroupItem value="off" />
+								<span className="text-sm">Force off (0)</span>
+							</Label>
+							<Label className="flex items-center gap-2 normal-case tracking-normal">
+								<RadioGroupItem value="search" />
+								<span className="text-sm">Search both</span>
+							</Label>
+						</RadioGroup>
+					</FieldRow>
 				</CardContent>
 			</Card>
 

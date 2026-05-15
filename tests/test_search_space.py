@@ -7,7 +7,9 @@ from bracket.search.space import (
     FixedKnob,
     FloatKnob,
     IntKnob,
+    SearchOverrides,
     SearchSpace,
+    apply_search_overrides,
 )
 
 
@@ -88,3 +90,111 @@ def test_search_space_validate_rejects_missing_or_extra():
         space.validate({})
     with pytest.raises(ValueError):
         space.validate({"a": 1, "b": 2})
+
+def _trainer_like_space():
+    return SearchSpace(
+        name='sdxl-lora-v0.3-mid',
+        knobs={
+            'learning_rate': FloatKnob(low=1e-6, high=5e-4, log=True),
+            'train_batch_size': CategoricalKnob(choices=(1, 2, 4, 8)),
+            'gradient_checkpointing': CategoricalKnob(choices=(True, False)),
+        },
+    )
+
+
+def test_apply_search_overrides_empty_is_noop():
+    space = _trainer_like_space()
+    out = apply_search_overrides(space, SearchOverrides())
+    assert out is space
+
+
+def test_apply_search_overrides_none_is_noop():
+    space = _trainer_like_space()
+    assert apply_search_overrides(space, None) is space
+
+
+def test_lr_min_and_max_replace_float_knob():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(lr_min=1e-5, lr_max=1e-4),
+    )
+    lr = out.knobs['learning_rate']
+    assert isinstance(lr, FloatKnob)
+    assert lr.low == 1e-5 and lr.high == 1e-4 and lr.log is True
+    assert out.name.endswith('+overrides')
+
+
+def test_lr_min_only_keeps_trainer_max():
+    space = _trainer_like_space()
+    out = apply_search_overrides(space, SearchOverrides(lr_min=1e-5))
+    lr = out.knobs['learning_rate']
+    assert lr.low == 1e-5 and lr.high == 5e-4
+
+
+def test_lr_min_above_max_is_normalised_not_thrown():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(lr_min=1e-4, lr_max=1e-5),
+    )
+    lr = out.knobs['learning_rate']
+    assert lr.low == 1e-5 and lr.high == 1e-4
+
+
+def test_batch_size_filters_categorical_choices():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(batch_size_min=2, batch_size_max=4),
+    )
+    bs = out.knobs['train_batch_size']
+    assert isinstance(bs, CategoricalKnob)
+    assert bs.choices == (2, 4)
+
+
+def test_batch_size_falls_back_to_int_knob_when_no_choice_fits():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(batch_size_min=16, batch_size_max=32),
+    )
+    bs = out.knobs['train_batch_size']
+    assert isinstance(bs, IntKnob)
+    assert bs.low == 16 and bs.high == 32
+
+
+def test_gradient_checkpointing_on_forces_fixed_true():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(gradient_checkpointing_mode='on'),
+    )
+    gc = out.knobs['gradient_checkpointing']
+    assert isinstance(gc, FixedKnob) and gc.value is True
+
+
+def test_gradient_checkpointing_off_forces_fixed_false():
+    space = _trainer_like_space()
+    out = apply_search_overrides(
+        space, SearchOverrides(gradient_checkpointing_mode='off'),
+    )
+    gc = out.knobs['gradient_checkpointing']
+    assert isinstance(gc, FixedKnob) and gc.value is False
+
+
+def test_gradient_checkpointing_search_replaces_fixed_with_categorical():
+    space = SearchSpace(
+        name='tier-low',
+        knobs={'gradient_checkpointing': FixedKnob(value=True)},
+    )
+    out = apply_search_overrides(
+        space, SearchOverrides(gradient_checkpointing_mode='search'),
+    )
+    gc = out.knobs['gradient_checkpointing']
+    assert isinstance(gc, CategoricalKnob) and set(gc.choices) == {True, False}
+
+
+def test_overrides_for_missing_knobs_are_silently_ignored():
+    space = SearchSpace(name='minimal', knobs={'learning_rate': FloatKnob(1e-6, 1e-4, log=True)})
+    out = apply_search_overrides(
+        space,
+        SearchOverrides(batch_size_min=1, batch_size_max=2, gradient_checkpointing_mode='off'),
+    )
+    assert set(out.knobs) == {'learning_rate'}
+

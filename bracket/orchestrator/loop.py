@@ -21,6 +21,7 @@ from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.runner import RunLauncher, RunResult
 from bracket.orchestrator.scorer import Scorer, ScoreReport
 from bracket.search.controller import LedgerEntry, SearchController
+from bracket.search.space import SearchOverrides, apply_search_overrides
 from bracket.trainer.base import Trainer, TrainerConfig
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,7 @@ def orchestrate(
     loss_weight: float = 0.3,
     sample_weight: float = 0.7,
     stop_event: Optional["__import__('threading').Event"] = None,
+    search_overrides: Optional[SearchOverrides] = None,
 ) -> OrchestrationResult:
     """`n_curated` controls the warm-start: number of curated configs to try
     after the baseline and before the search controller takes over. None or
@@ -212,6 +214,7 @@ def orchestrate(
         sample_weight=sample_weight,
     )
     space = trainer.declare_search_space()
+    space = apply_search_overrides(space, search_overrides)
     judge_prompts = parse_judge_prompts_file(sample_prompts) if sample_prompts else None
 
     history: list[LedgerEntry] = list(ledger.to_history())

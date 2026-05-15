@@ -163,6 +163,11 @@ export interface StartSessionRequest {
 	judge_loss_weight: number;
 	judge_sample_weight: number;
 	judge_disable_thinking: boolean;
+	lr_min: number | null;
+	lr_max: number | null;
+	batch_size_min: number | null;
+	batch_size_max: number | null;
+	gradient_checkpointing_mode: "on" | "off" | "search" | null;
 	preset_field_values: Record<string, string>;
 }
 

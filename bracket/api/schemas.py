@@ -96,6 +96,10 @@ class StartSessionRequest(_Base):
     output_dir: str
     sample_prompts: str = ""
     resume: str = ""
+    # 0 (or any value <= 0) means "use the full dataset" — skip the
+    # subset-building step entirely and point the trainer at the
+    # user-supplied dataset_toml as-is. Anything > 0 caps each class
+    # subdirectory to that many randomly-sampled images.
     images_per_dataset: int = 12
     vram_gb: Optional[float] = None
 
@@ -125,6 +129,19 @@ class StartSessionRequest(_Base):
     # equivalent (= leave default) is encoded as False here so the field
     # survives JSON round-trip cleanly.
     judge_disable_thinking: bool = False
+
+    # Search-range overrides. Any/all may be left null — the trainer's
+    # default knob range (typically VRAM-tier aware) is used for any knob
+    # that isn't overridden. Empty/zero bounds are treated as "no
+    # override" so the form's blank state never silently narrows the
+    # search to a single point.
+    lr_min: Optional[float] = None
+    lr_max: Optional[float] = None
+    batch_size_min: Optional[int] = None
+    batch_size_max: Optional[int] = None
+    # One of: "on" (force enabled), "off" (force disabled), "search"
+    # (toggle in the search), or None (use trainer default).
+    gradient_checkpointing_mode: Optional[str] = None
 
     # Preset-specific values, keyed by FieldSpec.name
     preset_field_values: dict[str, str] = Field(default_factory=dict)
