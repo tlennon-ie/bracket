@@ -1,6 +1,8 @@
 import { ComparisonGrid } from "@/components/results/ComparisonGrid";
 import { ConfigDiff } from "@/components/results/ConfigDiff";
 import { ReportViewer } from "@/components/results/ReportViewer";
+import { RunComparisonChart } from "@/components/results/RunComparisonChart";
+import { SmoothingSlider } from "@/components/monitor/SmoothingSlider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -241,6 +243,22 @@ function ResultsPage() {
 					)}
 				</CardContent>
 			</Card>
+
+			{compareRunIds.length > 0 && (
+				<Card>
+					<CardHeader className="flex-row items-center justify-between space-y-0">
+						<CardTitle>
+							{compareRunIds.length === 1
+								? "Loss curve"
+								: `Loss curves · ${compareRunIds.length} runs`}
+						</CardTitle>
+						<SmoothingSlider />
+					</CardHeader>
+					<CardContent>
+						<RunComparisonChart runIds={compareRunIds} />
+					</CardContent>
+				</Card>
+			)}
 
 			{compareRunIds.length >= 2 && (
 				<Card className="no-print">

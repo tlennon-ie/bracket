@@ -8,6 +8,7 @@ import type {
 	GalleryGroup,
 	HealthPayload,
 	JudgeStatus,
+	LossSeries,
 	ModelFamily,
 	MonitorSnapshot,
 	Preset,
@@ -135,6 +136,14 @@ export const api = {
 			`/api/runs/${encodeURIComponent(runId)}/log?offset=${offset}`,
 			{},
 			{ silent, acceptStatuses: [404] },
+		),
+	// The ema_alpha query param is documented as 0.001..1.0 but the chart
+	// re-smooths client-side, so the server smoothing is just a fallback.
+	getRunLoss: (runId: string, emaAlpha = 0.05): Promise<LossSeries> =>
+		request(
+			`/api/runs/${encodeURIComponent(runId)}/loss?ema_alpha=${emaAlpha}`,
+			{},
+			{ acceptStatuses: [404] },
 		),
 	exportTrainingConfig: (runId: string): Promise<TrainingConfigExport> =>
 		request(`/api/runs/${encodeURIComponent(runId)}/training-config`),
