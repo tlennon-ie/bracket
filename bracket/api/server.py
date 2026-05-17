@@ -369,6 +369,13 @@ def _start_session_impl(
             n_samples=max(1, int(getattr(req, "judge_n_samples", 1) or 1)),
         ))
 
+    clip_iqa = None
+    if bool(getattr(req, "enable_clip_iqa_gate", False)) and sp is not None:
+        from bracket.judge.clip_iqa import ClipIqaJudge, ClipIqaJudgeConfig
+        clip_iqa = ClipIqaJudge(ClipIqaJudgeConfig(
+            dq_threshold=float(getattr(req, "clip_iqa_dq_threshold", 0.30) or 0.30),
+        ))
+
     if req.search_method == "optuna":
         controller: SearchController = OptunaTPESearch(
             seed=0, n_startup_trials=int(req.optuna_startup),
@@ -398,6 +405,10 @@ def _start_session_impl(
             sample_prompts_ood=sp_ood,
             sample_every_n_steps=sample_every,
             sample_judge=judge,
+            clip_iqa_judge=clip_iqa,
+            clip_iqa_dq_threshold=float(
+                getattr(req, "clip_iqa_dq_threshold", 0.30) or 0.30
+            ),
             loss_weight=float(req.judge_loss_weight),
             sample_weight=float(req.judge_sample_weight),
             stop_event=session.stop_event,

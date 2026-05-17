@@ -169,6 +169,8 @@ export interface StartSessionRequest {
 	judge_sample_weight: number;
 	judge_disable_thinking: boolean;
 	judge_n_samples?: number;
+	enable_clip_iqa_gate?: boolean;
+	clip_iqa_dq_threshold?: number;
 	lr_min: number | null;
 	lr_max: number | null;
 	batch_size_min: number | null;

@@ -143,6 +143,17 @@ class StartSessionRequest(_Base):
     # Default 1 = current deterministic behaviour.
     judge_n_samples: int = 1
 
+    # CLIP-IQA disqualification gate. When True, the orchestrator also
+    # runs pyiqa's CLIP-IQA metric across every sampled image and
+    # disqualifies the run when the median falls below
+    # ``clip_iqa_dq_threshold`` (default 0.30, on pyiqa's native [0, 1]
+    # scale). CLIP-IQA is NOT used as a primary ranker — the VLM judge
+    # still drives selection; this just catches "melted" outputs the
+    # VLM hallucinated were fine. Default off — opt-in until the
+    # threshold has been tuned on real datasets.
+    enable_clip_iqa_gate: bool = False
+    clip_iqa_dq_threshold: float = 0.30
+
     # Search-range overrides. Any/all may be left null — the trainer's
     # default knob range (typically VRAM-tier aware) is used for any knob
     # that isn't overridden. Empty/zero bounds are treated as "no

@@ -32,6 +32,8 @@ const DEFAULTS: StartSessionRequest = {
 	judge_sample_weight: 0.7,
 	judge_disable_thinking: false,
 	judge_n_samples: 1,
+	enable_clip_iqa_gate: false,
+	clip_iqa_dq_threshold: 0.3,
 	lr_min: null,
 	lr_max: null,
 	batch_size_min: null,

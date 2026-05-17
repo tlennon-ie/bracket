@@ -218,6 +218,8 @@ def orchestrate(
     sample_prompts_ood: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     sample_judge: Optional[SampleJudge] = None,
+    clip_iqa_judge: Optional[SampleJudge] = None,
+    clip_iqa_dq_threshold: float = 0.30,
     loss_weight: float = 0.3,
     sample_weight: float = 0.7,
     stop_event: Optional["__import__('threading').Event"] = None,
@@ -265,6 +267,8 @@ def orchestrate(
         sample_judge=sample_judge if sample_prompts is not None else None,
         loss_weight=loss_weight,
         sample_weight=sample_weight,
+        clip_iqa_judge=clip_iqa_judge if sample_prompts is not None else None,
+        clip_iqa_dq_threshold=clip_iqa_dq_threshold,
     )
     space = trainer.declare_search_space()
     space = apply_search_overrides(space, search_overrides)

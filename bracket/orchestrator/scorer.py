@@ -56,6 +56,8 @@ class Scorer:
         sample_judge: Optional[SampleJudge] = None,
         loss_weight: float = 0.3,
         sample_weight: float = 0.7,
+        clip_iqa_judge: Optional[SampleJudge] = None,
+        clip_iqa_dq_threshold: float = 0.30,
     ) -> None:
         if loss_weight < 0 or sample_weight < 0:
             raise ValueError("weights must be >= 0")
@@ -67,6 +69,13 @@ class Scorer:
         self.sample_judge = sample_judge
         self.loss_weight = loss_weight
         self.sample_weight = sample_weight
+        # Optional secondary judge used as a DQ gate, NOT as a primary
+        # ranker. When set, the scorer judges every image in the sample
+        # dir via clip_iqa_judge and disqualifies the run if the median
+        # of the per-image scores falls below clip_iqa_dq_threshold.
+        # Threshold is in [0, 1] (clip-iqa's native scale).
+        self.clip_iqa_judge = clip_iqa_judge
+        self.clip_iqa_dq_threshold = clip_iqa_dq_threshold
 
     def score_tfevents(self, tfevents_path: Optional[Path]) -> ScoreReport:
         """Backwards-compatible loss-only scoring entry point used by tests."""
@@ -198,10 +207,54 @@ class Scorer:
                 new_components["generalization_gap"] = (
                     new_components["ood_score"] - new_components["in_dist_score"]
                 )
+        # CLIP-IQA gate. Runs alongside the VLM judge as an additional
+        # check; emits a clip_iqa_median component and DQs if the
+        # median falls below the configured threshold. The VLM's score
+        # is the primary ranker — clip-iqa just catches "melted"
+        # outputs the VLM happily called fine.
+        if self.clip_iqa_judge is not None and prompt_for_image:
+            disqualified, clip_components = self._run_clip_iqa_gate(prompt_for_image)
+            new_components.update(clip_components)
+            if disqualified is not None:
+                return ScoreReport(
+                    score=math.inf, components=new_components,
+                    n_steps=report.n_steps, disqualified=disqualified,
+                    judge_report=judge_report,
+                )
         return ScoreReport(
             score=combined, components=new_components,
             n_steps=report.n_steps, disqualified=None, judge_report=judge_report,
         )
+
+    def _run_clip_iqa_gate(
+        self, prompt_for_image: dict[Path, str],
+    ) -> tuple[Optional[str], dict[str, float]]:
+        """Run the configured CLIP-IQA judge across the run's samples
+        and return (``disqualified`` reason, components dict)."""
+        if self.clip_iqa_judge is None:
+            return None, {}
+        scores_01: list[float] = []
+        for img, prompt in prompt_for_image.items():
+            j = self.clip_iqa_judge.judge_image(img, prompt)
+            if j.error is not None:
+                continue
+            # ClipIqaJudge encodes the raw [0,1] value as overall * 10.
+            scores_01.append(max(0.0, min(1.0, j.overall / 10.0)))
+        # Free the model's VRAM ahead of the next training run.
+        try:
+            self.clip_iqa_judge.eject()
+        except Exception:  # noqa: BLE001 — eject must never block the loop
+            pass
+        if not scores_01:
+            return None, {"clip_iqa_unavailable": 1.0}
+        median = _percentile(scores_01, 50.0)
+        components = {
+            "clip_iqa_median": float(median),
+            "clip_iqa_samples_judged": float(len(scores_01)),
+        }
+        if median < float(self.clip_iqa_dq_threshold):
+            return "low_clip_iqa", components
+        return None, components
 
     def _score_frames(self, frames: list[LossFrame]) -> ScoreReport:
         n = len(frames)
