@@ -180,6 +180,11 @@ class SD35FullTrainer(Trainer):
             "--weighting_scheme", "logit_normal",
             "--discrete_flow_shift", f"{config.discrete_flow_shift:.4f}",
         ]
+        # Skip the per-image latent integrity check when the dataset is
+        # already cached (saves several minutes on large sets).
+        from bracket.dataset.latent_cache import dataset_has_cached_latents
+        if dataset_has_cached_latents(dataset_toml):
+            cmd.append("--skip_cache_check")
         if config.full_bf16:
             cmd.append("--full_bf16")
         if config.fused_backward_pass:

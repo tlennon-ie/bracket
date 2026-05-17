@@ -220,6 +220,11 @@ class SDXLFullTrainer(Trainer):
             "--max_data_loader_n_workers", "2",
             "--persistent_data_loader_workers",
         ]
+        # Skip the per-image latent integrity check when the dataset is
+        # already cached — saves several minutes on a 26k-image set.
+        from bracket.dataset.latent_cache import dataset_has_cached_latents
+        if dataset_has_cached_latents(dataset_toml):
+            cmd.append("--skip_cache_check")
         if config.full_bf16:
             cmd.append("--full_bf16")
         if config.fused_backward_pass:

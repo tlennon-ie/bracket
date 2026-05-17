@@ -262,6 +262,11 @@ class SDXLTrainer(Trainer):
             "--max_data_loader_n_workers", str(config.dataloader_workers),
             "--persistent_data_loader_workers",
         ]
+        # Skip the per-image latent integrity check when the dataset is
+        # already cached (saves several minutes on large sets).
+        from bracket.dataset.latent_cache import dataset_has_cached_latents
+        if dataset_has_cached_latents(dataset_toml):
+            cmd.append("--skip_cache_check")
         if config.gradient_checkpointing:
             cmd.append("--gradient_checkpointing")
 

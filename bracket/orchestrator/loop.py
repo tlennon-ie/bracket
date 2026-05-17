@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from bracket.dataset.validator import validate_dataset_toml
 from bracket.judge.base import SampleJudge, parse_judge_prompts_file
 from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.runner import RunLauncher, RunResult
@@ -200,6 +201,28 @@ def orchestrate(
     entirely (legacy behaviour); positive int = cap. Each curated config
     counts as one candidate against `budget_runs`."""
     output_dir = Path(output_dir).resolve()
+
+    validation_result = validate_dataset_toml(dataset_toml)
+    if not validation_result.is_valid:
+        logger.error("Dataset validation failed: %s", validation_result.summary)
+        for err in validation_result.errors:
+            if err.severity == "error":
+                logger.error("  [ERROR] %s: %s", err.image_path, err.issue)
+            else:
+                logger.warning("  [WARNING] %s: %s", err.image_path, err.issue)
+        raise RuntimeError(
+            f"Dataset validation failed. See errors above. "
+            f"You can:\n"
+            f"  1. Fix captions manually\n"
+            f"  2. Run: python -m bracket.dataset.validator --fix {dataset_toml}\n"
+            f"  3. Run: python -m bracket.dataset.validator --remove-bad {dataset_toml}"
+        )
+    if validation_result.errors:
+        logger.warning("Dataset has %d warning(s) but is trainable: %s",
+                       len(validation_result.errors), validation_result.summary)
+    else:
+        logger.info("Dataset validation passed.")
+
     runs_dir = output_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     ledger = Ledger(output_dir / "ledger.jsonl")
