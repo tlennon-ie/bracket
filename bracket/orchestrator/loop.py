@@ -22,7 +22,11 @@ from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.runner import RunLauncher, RunResult
 from bracket.orchestrator.scorer import Scorer, ScoreReport
 from bracket.search.controller import LedgerEntry, SearchController
-from bracket.search.space import SearchOverrides, apply_search_overrides
+from bracket.search.space import (
+    SearchOverrides,
+    apply_search_overrides,
+    clamp_config_to_overrides,
+)
 from bracket.trainer.base import Trainer, TrainerConfig
 
 logger = logging.getLogger(__name__)
@@ -305,7 +309,11 @@ def orchestrate(
     n_disqualified = sum(1 for h in history if h.score is None)
 
     if baseline_entry is None and not skip_baseline:
-        config = trainer.baseline_config()
+        # Honour the user's lr/batch_size bounds on the fixed baseline too —
+        # otherwise a user who sets batch_size_min=6 still gets a baseline
+        # at the trainer's tier default (e.g. 2) which contradicts the
+        # explicit lower bound.
+        config = clamp_config_to_overrides(trainer.baseline_config(), search_overrides)
         config_dict = config.to_dict()
         cfg_id = config_id(config_dict)
         for seed_idx in range(seeds_per_config):
@@ -345,7 +353,10 @@ def orchestrate(
     # before handing off to the search controller. Each curated config
     # consumes `seeds_per_config` slots of budget_runs (which is in
     # seed-runs, matching controller.should_stop).
-    curated = list(trainer.curated_configs())
+    curated = [
+        clamp_config_to_overrides(c, search_overrides)
+        for c in trainer.curated_configs()
+    ]
     if n_curated is None or n_curated < 0:
         n_curated_target = len(curated)
     else:

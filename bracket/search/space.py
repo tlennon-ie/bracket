@@ -7,10 +7,13 @@ ranges span orders of magnitude.
 
 from __future__ import annotations
 
+import logging
 import math
 import random as _random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass, replace
 from typing import Any, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Knob:
@@ -211,3 +214,61 @@ def apply_search_overrides(space: SearchSpace, overrides: Optional[SearchOverrid
             new_knobs["gradient_checkpointing"] = CategoricalKnob(choices=(True, False))
 
     return SearchSpace(name=f"{space.name}+overrides", knobs=new_knobs)
+
+
+def clamp_config_to_overrides(config: Any, overrides: Optional[SearchOverrides]) -> Any:
+    """Return a new TrainerConfig with ``learning_rate`` and
+    ``train_batch_size`` clamped into the override window.
+
+    The search-space narrowing in :func:`apply_search_overrides` only
+    constrains the *sampled* candidate configs. Baseline and curated
+    configs are hard-coded by the trainer and would otherwise ignore the
+    user's bounds — leading to baselines that run at ``train_batch_size=2``
+    even when the user explicitly asked for a 6-10 window. This helper
+    clamps the fixed configs through the same window so every run in the
+    session honours the bounds.
+
+    Unknown attribute names are tolerated: a trainer that doesn't expose
+    ``train_batch_size`` (none today, but the protocol allows it) just
+    gets the field left alone.
+    """
+
+    if overrides is None or overrides.is_empty():
+        return config
+    if not is_dataclass(config) or isinstance(config, type):
+        return config
+
+    updates: dict[str, Any] = {}
+
+    if hasattr(config, "learning_rate") and (
+        overrides.lr_min is not None or overrides.lr_max is not None
+    ):
+        lr = float(getattr(config, "learning_rate"))
+        if overrides.lr_min is not None and lr < float(overrides.lr_min):
+            lr = float(overrides.lr_min)
+        if overrides.lr_max is not None and lr > float(overrides.lr_max):
+            lr = float(overrides.lr_max)
+        updates["learning_rate"] = lr
+
+    if hasattr(config, "train_batch_size") and (
+        overrides.batch_size_min is not None or overrides.batch_size_max is not None
+    ):
+        bs = int(getattr(config, "train_batch_size"))
+        if overrides.batch_size_min is not None and bs < int(overrides.batch_size_min):
+            bs = int(overrides.batch_size_min)
+        if overrides.batch_size_max is not None and bs > int(overrides.batch_size_max):
+            bs = int(overrides.batch_size_max)
+        updates["train_batch_size"] = bs
+
+    if hasattr(config, "gradient_checkpointing") and overrides.gradient_checkpointing_mode in (
+        "on", "off"
+    ):
+        updates["gradient_checkpointing"] = overrides.gradient_checkpointing_mode == "on"
+
+    if not updates:
+        return config
+    logger.info(
+        "clamping fixed config to user overrides: %s",
+        ", ".join(f"{k}={v}" for k, v in updates.items()),
+    )
+    return replace(config, **updates)

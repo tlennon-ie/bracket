@@ -198,3 +198,119 @@ def test_overrides_for_missing_knobs_are_silently_ignored():
     )
     assert set(out.knobs) == {'learning_rate'}
 
+
+
+# ── clamp_config_to_overrides ─────────────────────────────────────────
+
+from dataclasses import dataclass
+from bracket.search.space import clamp_config_to_overrides
+
+
+@dataclass
+class _DummyConfig:
+    learning_rate: float = 1e-6
+    train_batch_size: int = 2
+    gradient_checkpointing: bool = False
+
+
+def test_clamp_none_overrides_returns_same_config():
+    cfg = _DummyConfig()
+    out = clamp_config_to_overrides(cfg, None)
+    assert out is cfg
+
+
+def test_clamp_empty_overrides_returns_same_config():
+    cfg = _DummyConfig()
+    out = clamp_config_to_overrides(cfg, SearchOverrides())
+    assert out is cfg
+
+
+def test_clamp_bumps_batch_size_up_to_min():
+    """The exact bug the user hit: baseline_config returned bs=2 even
+    though user set batch_size_min=6. Clamp must lift it to 6."""
+    cfg = _DummyConfig(train_batch_size=2)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(batch_size_min=6, batch_size_max=10),
+    )
+    assert out.train_batch_size == 6
+    assert cfg.train_batch_size == 2  # original untouched
+
+
+def test_clamp_drops_batch_size_down_to_max():
+    cfg = _DummyConfig(train_batch_size=16)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(batch_size_min=2, batch_size_max=8),
+    )
+    assert out.train_batch_size == 8
+
+
+def test_clamp_leaves_in_window_value_alone():
+    cfg = _DummyConfig(train_batch_size=4)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(batch_size_min=2, batch_size_max=8),
+    )
+    assert out.train_batch_size == 4
+
+
+def test_clamp_lifts_lr_to_min():
+    cfg = _DummyConfig(learning_rate=1e-7)
+    out = clamp_config_to_overrides(cfg, SearchOverrides(lr_min=1e-5, lr_max=1e-3))
+    assert out.learning_rate == pytest.approx(1e-5)
+
+
+def test_clamp_drops_lr_to_max():
+    cfg = _DummyConfig(learning_rate=1e-2)
+    out = clamp_config_to_overrides(cfg, SearchOverrides(lr_min=1e-5, lr_max=1e-3))
+    assert out.learning_rate == pytest.approx(1e-3)
+
+
+def test_clamp_handles_one_sided_bounds():
+    """Either bound alone must work — the other field stays untouched."""
+    cfg = _DummyConfig(train_batch_size=2)
+    out = clamp_config_to_overrides(cfg, SearchOverrides(batch_size_min=6))
+    assert out.train_batch_size == 6
+    cfg2 = _DummyConfig(train_batch_size=20)
+    out2 = clamp_config_to_overrides(cfg2, SearchOverrides(batch_size_max=10))
+    assert out2.train_batch_size == 10
+
+
+def test_clamp_grad_ckpt_on_forces_true():
+    cfg = _DummyConfig(gradient_checkpointing=False)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(gradient_checkpointing_mode='on'),
+    )
+    assert out.gradient_checkpointing is True
+
+
+def test_clamp_grad_ckpt_off_forces_false():
+    cfg = _DummyConfig(gradient_checkpointing=True)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(gradient_checkpointing_mode='off'),
+    )
+    assert out.gradient_checkpointing is False
+
+
+def test_clamp_grad_ckpt_search_leaves_value_alone():
+    """'search' means 'toggle in the sampling space' — for the fixed
+    baseline/curated configs we have nothing meaningful to do, so leave
+    the trainer's chosen value alone."""
+    cfg = _DummyConfig(gradient_checkpointing=True)
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(gradient_checkpointing_mode='search'),
+    )
+    assert out.gradient_checkpointing is True
+
+
+def test_clamp_tolerates_missing_attrs():
+    """A trainer config without train_batch_size / learning_rate must not
+    crash — clamping just skips the missing fields."""
+
+    @dataclass
+    class Sparse:
+        only_field: int = 0
+
+    cfg = Sparse()
+    out = clamp_config_to_overrides(
+        cfg, SearchOverrides(lr_min=1e-5, batch_size_min=6),
+    )
+    assert out.only_field == 0
