@@ -191,6 +191,10 @@ class LossSeriesOut(_Base):
     steps: list[int] = Field(default_factory=list)
     raw: list[float] = Field(default_factory=list)
     smoothed: list[float] = Field(default_factory=list)
+    # Per-step gradient norm. Either empty (trainer doesn't emit a
+    # grad_norm scalar) or the same length as ``steps``, with ``None``
+    # entries for steps where no value was logged.
+    grad_norms: list[Optional[float]] = Field(default_factory=list)
 
 
 class MonitorSnapshotOut(_Base):

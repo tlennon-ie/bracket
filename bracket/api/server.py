@@ -184,6 +184,7 @@ def _loss_series_to_out(ls: object) -> Optional[LossSeriesOut]:
         steps=list(getattr(ls, "steps", []) or []),
         raw=list(getattr(ls, "raw", []) or []),
         smoothed=list(getattr(ls, "smoothed", []) or []),
+        grad_norms=list(getattr(ls, "grad_norms", []) or []),
     )
 
 
@@ -687,7 +688,10 @@ def _make_router() -> APIRouter:
         ls = load_loss_series(tfe, ema_alpha=ema_alpha)
         if ls is None:
             return LossSeriesOut()
-        return LossSeriesOut(steps=list(ls.steps), raw=list(ls.raw), smoothed=list(ls.smoothed))
+        return LossSeriesOut(
+            steps=list(ls.steps), raw=list(ls.raw), smoothed=list(ls.smoothed),
+            grad_norms=list(getattr(ls, "grad_norms", []) or []),
+        )
 
     # ── training-config export / promote ──
 

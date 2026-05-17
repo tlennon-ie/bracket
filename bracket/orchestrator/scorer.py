@@ -169,7 +169,7 @@ class Scorer:
         window = max(2, int(round(self.slope_window_fraction * n)))
         tail = frames[-window:]
         slope = _least_squares_slope([f.step for f in tail], [f.smoothed_loss for f in tail])
-        components = {
+        components: dict[str, float] = {
             "final_smoothed": last.smoothed_loss,
             "final_raw": last.raw_loss,
             "slope": slope,
@@ -177,6 +177,41 @@ class Scorer:
             "first_smoothed": frames[0].smoothed_loss,
             "n_frames": float(n),
         }
+
+        # Gradient-norm stability — only emitted by trainers that route a
+        # ``mean_grad_norm`` value through ``generate_step_logs``. When
+        # nothing is logged we skip the components entirely; absence of a
+        # signal is not a divergence signal.
+        grad_values = [f.grad_norm for f in frames if f.grad_norm is not None]
+        if grad_values:
+            # Explosion check: any non-finite value or a 99th-percentile that
+            # blew past the hard cap means optimisation has gone unstable —
+            # the rest of the loss curve is unreliable noise.
+            if any(not math.isfinite(g) for g in grad_values):
+                gn_p99 = math.inf
+            else:
+                gn_p99 = _percentile(grad_values, 99.0)
+            components["grad_norm_p99"] = gn_p99
+
+            window_size = max(2, int(round(self.slope_window_fraction * n)))
+            tail_grads = [
+                f.grad_norm for f in frames[-window_size:] if f.grad_norm is not None
+            ]
+            if len(tail_grads) >= 2:
+                mean_tail = sum(tail_grads) / len(tail_grads)
+                variance = sum((g - mean_tail) ** 2 for g in tail_grads) / len(tail_grads)
+                std_tail = math.sqrt(variance)
+                if mean_tail > 0 and math.isfinite(mean_tail) and math.isfinite(std_tail):
+                    components["grad_norm_oscillation"] = std_tail / mean_tail
+                else:
+                    components["grad_norm_oscillation"] = math.inf if not math.isfinite(std_tail) else 0.0
+
+            if not math.isfinite(gn_p99) or gn_p99 > 100.0:
+                return ScoreReport(
+                    score=math.inf, components=components, n_steps=n,
+                    disqualified="gradient_explosion",
+                )
+
         if slope > self.positive_slope_kill_threshold:
             return ScoreReport(
                 score=math.inf, components=components, n_steps=n,
@@ -242,6 +277,25 @@ def _extract_prompt_idx(stem: str) -> Optional[int]:
     if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
         return int(parts[-2])
     return None
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile (matches numpy default). ``values``
+    is sorted internally; caller does not need to pre-sort."""
+    if not values:
+        return float("nan")
+    if pct <= 0:
+        return min(values)
+    if pct >= 100:
+        return max(values)
+    sorted_vals = sorted(values)
+    k = (pct / 100.0) * (len(sorted_vals) - 1)
+    lo = int(math.floor(k))
+    hi = int(math.ceil(k))
+    if lo == hi:
+        return sorted_vals[lo]
+    frac = k - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
 
 
 def _least_squares_slope(xs, ys) -> float:

@@ -46,6 +46,24 @@ LOSS_TAG = "loss/current"
 LOSS_TAG_CANDIDATES: tuple[str, ...] = ("loss/current", "loss/average", "loss")
 LR_TAG = "lr/unet"
 LR_TAG_CANDIDATES: tuple[str, ...] = ("lr/unet", "lr/textencoder")
+# Per-step gradient norm. Different trainers use different names:
+#   * sd-scripts/train_network.py emits ``norm/avg_grad_norm`` when the
+#     ``mean_grad_norm`` arg is passed to ``generate_step_logs`` (LoRA flow).
+#   * musubi-tuner mirrors the sd-scripts log dict, so the same tag shows up
+#     for Z-Image / Flux-2-Klein / Qwen-Image / Hunyuan when grad-norm is
+#     plumbed through.
+#   * Some forks log directly under ``train/grad_norm`` or a bare
+#     ``grad_norm``. Keep both as fallbacks.
+# When no candidate tag is present (e.g. SDXL full-FT today) the reader
+# simply emits ``LossFrame.grad_norm=None`` and the scorer skips its
+# stability components.
+GRAD_NORM_TAG = "norm/avg_grad_norm"
+GRAD_NORM_TAG_CANDIDATES: tuple[str, ...] = (
+    "norm/avg_grad_norm",
+    "train/grad_norm",
+    "grad_norm",
+    "loss/grad_norm",
+)
 
 
 def scalar_tags_in(event_path: str) -> list[str]:
@@ -75,6 +93,7 @@ class TFEventsTail:
         ema_alpha: float = 0.05,
         loss_tag: str | tuple[str, ...] = LOSS_TAG_CANDIDATES,
         lr_tag: str | tuple[str, ...] = LR_TAG_CANDIDATES,
+        grad_norm_tag: str | tuple[str, ...] = GRAD_NORM_TAG_CANDIDATES,
     ) -> None:
         if not os.path.exists(event_path):
             raise FileNotFoundError(event_path)
@@ -83,6 +102,9 @@ class TFEventsTail:
         self._poll_interval_s = poll_interval_s
         self._loss_tag_candidates = (loss_tag,) if isinstance(loss_tag, str) else loss_tag
         self._lr_tag_candidates = (lr_tag,) if isinstance(lr_tag, str) else lr_tag
+        self._grad_norm_tag_candidates = (
+            (grad_norm_tag,) if isinstance(grad_norm_tag, str) else grad_norm_tag
+        )
         self._smoother = EMASmoother(alpha=ema_alpha)
         self._last_step_emitted = -1
         self._stop = threading.Event()
@@ -127,6 +149,14 @@ class TFEventsTail:
         loss_events = ea.Scalars(loss_tag)
         lr_tag = next((t for t in self._lr_tag_candidates if t in tags), None)
         lr_events = {e.step: e.value for e in ea.Scalars(lr_tag)} if lr_tag else {}
+        grad_norm_tag = next(
+            (t for t in self._grad_norm_tag_candidates if t in tags), None
+        )
+        grad_norm_events: dict[int, float] = (
+            {e.step: e.value for e in ea.Scalars(grad_norm_tag)}
+            if grad_norm_tag
+            else {}
+        )
         emitted = 0
         for ev in loss_events:
             if ev.step <= self._last_step_emitted:
@@ -140,7 +170,11 @@ class TFEventsTail:
                 wall_time=float(ev.wall_time),
                 timestep=None,
                 timestep_bucket=None,
-                grad_norm=None,
+                grad_norm=(
+                    float(grad_norm_events[ev.step])
+                    if ev.step in grad_norm_events
+                    else None
+                ),
             )
             try:
                 self._on_frame(frame)

@@ -167,6 +167,67 @@ def test_drain_picks_bare_loss_tag_for_sdxl_full():
         assert seen[0].raw_loss == pytest.approx(0.195)
 
 
+def _make_grad_norm_event_file(
+    tmp: Path, *, n_steps: int = 10, grad_tag: str = "norm/avg_grad_norm",
+) -> str:
+    """Synthesize a sd-scripts-style event file that includes both
+    per-step loss and the trainer's ``norm/avg_grad_norm`` scalar — the
+    tag emitted by ``generate_step_logs`` when LoRA trainers route a
+    ``mean_grad_norm`` through it."""
+    writer = EventFileWriter(str(tmp), max_queue_size=1024, flush_secs=0)
+    base = time.time()
+    for step in range(1, n_steps + 1):
+        _write_scalar(writer, "loss/current", 0.4, step, base + step * 0.1)
+        _write_scalar(writer, "lr/unet", 1e-6, step, base + step * 0.1)
+        _write_scalar(writer, grad_tag, 0.5 + 0.01 * step, step, base + step * 0.1)
+    writer.close()
+    files = sorted(p for p in tmp.glob("events.out.tfevents.*"))
+    assert files
+    return str(files[-1])
+
+
+def test_drain_populates_grad_norm_from_sd_scripts_tag():
+    """sd-scripts emits ``norm/avg_grad_norm`` when the LoRA trainer
+    plumbs a mean_grad_norm value through ``generate_step_logs``. The
+    reader must pick it up so the scorer can compute stability
+    components."""
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_grad_norm_event_file(Path(td), n_steps=12)
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(event_path=path, on_frame=seen.append, ema_alpha=0.1)
+        n = tail.drain_once()
+        assert n == 12
+        assert all(f.grad_norm is not None for f in seen)
+        # Monotonic by construction; smoke-check first vs last value.
+        assert seen[0].grad_norm == pytest.approx(0.51)
+        assert seen[-1].grad_norm == pytest.approx(0.62)
+
+
+def test_drain_populates_grad_norm_from_train_grad_norm_tag():
+    """Fork trainers sometimes log under ``train/grad_norm`` — verify
+    the candidate fallback in GRAD_NORM_TAG_CANDIDATES is exercised."""
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_grad_norm_event_file(
+            Path(td), n_steps=5, grad_tag="train/grad_norm",
+        )
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(event_path=path, on_frame=seen.append, ema_alpha=0.1)
+        n = tail.drain_once()
+        assert n == 5
+        assert all(f.grad_norm is not None for f in seen)
+
+
+def test_drain_leaves_grad_norm_none_when_absent():
+    """Trainers that don't log grad_norm (e.g. SDXL full-FT today) must
+    still produce frames; LossFrame.grad_norm stays ``None``."""
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_event_file(Path(td), n_steps=5)
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(event_path=path, on_frame=seen.append, ema_alpha=0.1)
+        tail.drain_once()
+        assert all(f.grad_norm is None for f in seen)
+
+
 def test_callback_exception_does_not_break_iteration():
     """A misbehaving subscriber must not stop the tail or skip frames."""
     with tempfile.TemporaryDirectory() as td:

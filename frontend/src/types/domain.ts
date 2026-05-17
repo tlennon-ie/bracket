@@ -61,6 +61,10 @@ export interface LossSeries {
 	steps: number[];
 	raw: number[];
 	smoothed: number[];
+	// Per-step gradient norm. Either empty (trainer doesn't log
+	// grad_norm) or the same length as `steps`, with `null` entries on
+	// steps where the trainer didn't emit a value.
+	grad_norms?: Array<number | null>;
 }
 
 export interface MonitorSnapshot {

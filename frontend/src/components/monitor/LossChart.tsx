@@ -30,10 +30,12 @@ export function LossChart({ series, isLoading }: Props) {
 	const data = useMemo(() => {
 		if (!series || series.steps.length === 0) return [];
 		const smoothed = applyEMA(series.raw, smoothing);
+		const gradNorms = series.grad_norms ?? [];
 		const points = series.steps.map((step, i) => ({
 			step,
 			raw: series.raw[i] ?? null,
 			smoothed: smoothed[i] ?? null,
+			grad_norm: gradNorms[i] ?? null,
 		}));
 		if (points.length <= MAX_RENDER_POINTS) return points;
 		// Downsample raw + smoothed independently for faithful LTTB.
@@ -41,6 +43,10 @@ export function LossChart({ series, isLoading }: Props) {
 			points.map((p) => ({ x: p.step, y: p.raw ?? 0 })),
 			MAX_RENDER_POINTS,
 		);
+		// Build a step → grad_norm map so we can carry the secondary
+		// series through downsampling without running LTTB twice.
+		const gradByStep = new Map<number, number | null>();
+		for (const p of points) gradByStep.set(p.step, p.grad_norm);
 		return rawDS.map((p, i) => ({
 			step: p.x,
 			raw: p.y,
@@ -49,8 +55,14 @@ export function LossChart({ series, isLoading }: Props) {
 					rawDS.slice(0, i + 1).map((q) => q.y),
 					smoothing,
 				).pop() ?? null,
+			grad_norm: gradByStep.get(p.x) ?? null,
 		}));
 	}, [series, smoothing]);
+
+	const hasGradNorm = useMemo(
+		() => data.some((d) => typeof d.grad_norm === "number"),
+		[data],
+	);
 
 	if (isLoading) {
 		return <Skeleton className="h-[260px] w-full" />;
@@ -84,12 +96,24 @@ export function LossChart({ series, isLoading }: Props) {
 						tickFormatter={(v: number) => v.toLocaleString()}
 					/>
 					<YAxis
+						yAxisId="left"
 						tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
 						stroke="var(--border)"
 						domain={["auto", "auto"]}
 						width={48}
 						tickFormatter={(v: number) => v.toFixed(3)}
 					/>
+					{hasGradNorm ? (
+						<YAxis
+							yAxisId="right"
+							orientation="right"
+							tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+							stroke="var(--border)"
+							domain={["auto", "auto"]}
+							width={48}
+							tickFormatter={(v: number) => v.toFixed(2)}
+						/>
+					) : null}
 					<Tooltip
 						cursor={{ stroke: "var(--accent-bracket)", strokeWidth: 1 }}
 						contentStyle={{
@@ -107,6 +131,7 @@ export function LossChart({ series, isLoading }: Props) {
 						]}
 					/>
 					<Line
+						yAxisId="left"
 						type="monotone"
 						dataKey="raw"
 						stroke="var(--muted-foreground)"
@@ -116,6 +141,7 @@ export function LossChart({ series, isLoading }: Props) {
 						name="raw"
 					/>
 					<Line
+						yAxisId="left"
 						type="monotone"
 						dataKey="smoothed"
 						stroke="var(--accent-bracket)"
@@ -124,6 +150,21 @@ export function LossChart({ series, isLoading }: Props) {
 						isAnimationActive={false}
 						name="smoothed"
 					/>
+					{hasGradNorm ? (
+						<Line
+							yAxisId="right"
+							type="monotone"
+							dataKey="grad_norm"
+							stroke="var(--muted-foreground)"
+							strokeWidth={1}
+							strokeOpacity={0.5}
+							strokeDasharray="4 4"
+							dot={false}
+							isAnimationActive={false}
+							name="grad_norm"
+							connectNulls
+						/>
+					) : null}
 				</LineChart>
 			</ResponsiveContainer>
 		</div>
