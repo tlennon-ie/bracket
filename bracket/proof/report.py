@@ -28,6 +28,12 @@ def generate_report(ledger_path: Path, out_path: Path) -> Path:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     md = _render(rows)
+    # If the finals stage wrote a pairwise leaderboard sidecar, append it.
+    pairwise_sidecar = ledger_path.parent / "pairwise_leaderboard.md"
+    if pairwise_sidecar.exists():
+        extra = pairwise_sidecar.read_text(encoding="utf-8").strip()
+        if extra:
+            md = md.rstrip() + "\n\n" + extra + "\n"
     out_path.write_text(md, encoding="utf-8")
     return out_path
 

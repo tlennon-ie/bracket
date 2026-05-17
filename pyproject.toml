@@ -51,6 +51,13 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
 ]
+# Optional Bradley-Terry MLE solver. Bracket ships its own hand-rolled MM
+# implementation in `bracket.proof.pairwise_ranking`, so `choix` is only
+# needed by callers that want to fit BT against larger external datasets
+# or compare against a second implementation.
+pairwise_eval = [
+    "choix>=0.3.4",
+]
 
 [project.urls]
 Homepage = "https://github.com/tlennon-ie/bracket"

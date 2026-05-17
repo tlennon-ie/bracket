@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Card,
 	CardContent,
@@ -215,6 +216,26 @@ function RunPage() {
 						onChange={(v) => setField("finals_seeds", v)}
 						disabled={config.finals_top_k === 0}
 					/>
+					<Label className="flex items-start gap-2.5 normal-case tracking-normal cursor-pointer">
+						<Checkbox
+							id="enable_pairwise_finals"
+							checked={config.enable_pairwise_finals}
+							disabled={config.finals_top_k === 0}
+							onCheckedChange={(v) =>
+								setField("enable_pairwise_finals", v === true)
+							}
+							className="mt-0.5"
+						/>
+						<div className="flex flex-col gap-0.5">
+							<span className="text-sm">Pairwise tournament (Bradley-Terry)</span>
+							<span className="text-xs text-muted-foreground">
+								After the finals stage, run a round-robin where the VLM
+								compares every pair of finalists on every prompt. Adds an
+								Elo leaderboard to the report. ~7-10× the finals judge
+								load.
+							</span>
+						</div>
+					</Label>
 				</CardContent>
 			</Card>
 

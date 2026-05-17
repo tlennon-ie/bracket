@@ -380,12 +380,13 @@ def _start_session_impl(
     sp = Path(req.sample_prompts).expanduser() if req.sample_prompts.strip() else None
     sample_every = int(req.max_steps) if sp is not None else None
 
+    # `judge_disable_thinking=True` translates to enable_thinking=False
+    # in the chat_template_kwargs sent to LMStudio. Leave None when the
+    # user wants the model's default behaviour. Defined unconditionally
+    # so the pairwise-judge branch below can reuse it.
+    enable_thinking: Optional[bool] = False if req.judge_disable_thinking else None
     judge = None
     if req.judge_method == "lmstudio" and sp is not None:
-        # `judge_disable_thinking=True` translates to enable_thinking=False
-        # in the chat_template_kwargs sent to LMStudio. Leave None when the
-        # user wants the model's default behaviour.
-        enable_thinking = False if req.judge_disable_thinking else None
         judge = LMStudioJudge(LMStudioJudgeConfig(
             base_url=req.judge_base_url, model=req.judge_model,
             enable_thinking=enable_thinking,
@@ -433,6 +434,20 @@ def _start_session_impl(
             enable_two_rung_asha=bool(req.enable_two_rung_asha),
         )
 
+    # Pairwise judge for the BT tournament. Reuses the LMStudio config
+    # since the user already authenticated the same server for the
+    # single-image judge. Only built when explicitly enabled.
+    pairwise_judge = None
+    if bool(req.enable_pairwise_finals) and req.judge_method == "lmstudio":
+        from bracket.judge.lmstudio_pairwise import (
+            LMStudioPairwiseConfig, LMStudioPairwiseJudge,
+        )
+        pairwise_judge = LMStudioPairwiseJudge(LMStudioPairwiseConfig(
+            base_url=req.judge_base_url,
+            model=req.judge_model,
+            enable_thinking=enable_thinking,
+        ))
+
     finals_fn = None
     if int(req.finals_top_k) > 0:
         def finals_fn(stage1: OrchestrationResult) -> None:  # noqa: F811
@@ -446,6 +461,7 @@ def _start_session_impl(
                 sample_judge=judge,
                 loss_weight=float(req.judge_loss_weight),
                 sample_weight=float(req.judge_sample_weight),
+                pairwise_judge=pairwise_judge,
             )
 
     total_target = (1 + int(req.budget)) * int(req.seeds)
