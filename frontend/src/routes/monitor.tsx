@@ -121,6 +121,17 @@ function MonitorPage() {
 						/>
 					)}
 
+					{snapshot && snapshot.killed_by_pruner > 0 && (
+						<p
+							className="text-xs text-muted-foreground font-mono-tight"
+							title="Divergence killer activity"
+						>
+							killed: {snapshot.killed_by_pruner} · running:{" "}
+							{snapshot.running_runs} · completed:{" "}
+							{snapshot.completed_runs}
+						</p>
+					)}
+
 					{snapshot?.judge_summary && (
 						<p className="text-xs text-muted-foreground">
 							{snapshot.judge_summary}

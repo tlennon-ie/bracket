@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from bracket.judge.base import SampleJudge, parse_judge_prompts_file
+from bracket.judge.base import PairwiseJudge, SampleJudge, parse_judge_prompts_file
 from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.loop import (
     OrchestrationResult,
@@ -38,6 +38,9 @@ class FinalsResult:
     promoted_config_ids: list[str]
     finals_history: list[LedgerEntry]
     best_finalist: Optional[LedgerEntry]
+    # Markdown fragment from the Bradley-Terry tournament when
+    # ``enable_pairwise_finals`` is True. Empty string otherwise.
+    pairwise_leaderboard_md: str = ""
 
 
 def pick_top_k_configs(stage1: OrchestrationResult, k: int) -> list[dict]:
@@ -83,6 +86,7 @@ def run_finals_stage(
     loss_weight: float = 0.3,
     sample_weight: float = 0.7,
     mirror_stdout: bool = False,
+    pairwise_judge: Optional[PairwiseJudge] = None,
 ) -> FinalsResult:
     """Run the top-K stage-1 candidates at a higher step budget; append rows
     to the same ledger so the proof report covers both stages."""
@@ -119,7 +123,7 @@ def run_finals_stage(
             run_dir.mkdir(parents=True, exist_ok=True)
             logger.info("finals: cand=%d seed_idx=%d cfg_id=%s run_id=%s",
                         finalist_idx, seed_idx, cid, run_id)
-            result, score = _execute_one(
+            result, score, _live = _execute_one(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=finals_max_steps, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
@@ -137,8 +141,117 @@ def run_finals_stage(
 
     scored = [h for h in finals_history if h.score is not None]
     best_finalist = min(scored, key=lambda h: h.score) if scored else None
+
+    pairwise_md = ""
+    if pairwise_judge is not None and judge_prompts and len(promoted) >= 2:
+        pairwise_md = _run_pairwise_tournament(
+            finals_history=finals_history,
+            promoted_cids=promoted_cids,
+            prompts=judge_prompts,
+            judge=pairwise_judge,
+            runs_dir=runs_dir,
+        )
+        if pairwise_md:
+            (output_dir / "pairwise_leaderboard.md").write_text(
+                pairwise_md, encoding="utf-8",
+            )
+
     return FinalsResult(
         promoted_config_ids=promoted_cids,
         finals_history=finals_history,
         best_finalist=best_finalist,
+        pairwise_leaderboard_md=pairwise_md,
     )
+
+
+def _run_pairwise_tournament(
+    *,
+    finals_history: list[LedgerEntry],
+    promoted_cids: list[str],
+    prompts: list[str],
+    judge: PairwiseJudge,
+    runs_dir: Path,
+) -> str:
+    """Execute the Bradley-Terry round-robin over finalist configs.
+
+    Picks the best-seeded run per config as the representative when a
+    finalist has multiple seeds — the orchestrator typically keeps the
+    sample images in that run's sample_dir. Returns the rendered markdown
+    fragment (empty when too few finalists have judgeable samples).
+    """
+    from bracket.proof.pairwise_ranking import (
+        bootstrap_elo_cis,
+        render_leaderboard_md,
+        run_tournament,
+    )
+
+    representative_run: dict[str, LedgerEntry] = {}
+    for h in finals_history:
+        if h.score is None:
+            continue
+        cid = config_id(dict(h.config))
+        cur = representative_run.get(cid)
+        if cur is None or (cur.score is not None and h.score < cur.score):
+            representative_run[cid] = h
+
+    # Collect the sample image paths per competitor. The finals scorer
+    # writes them under <run_dir>/output/sample (sd-scripts) or similar
+    # for musubi. We probe both conventions and pick whichever the
+    # trainer actually populated.
+    images_for: dict[str, list[Path]] = {}
+    for cid in promoted_cids:
+        h = representative_run.get(cid)
+        if h is None:
+            continue
+        sample_dir = _locate_sample_dir(runs_dir, h.run_id)
+        if sample_dir is None or not sample_dir.exists():
+            continue
+        images_for[cid] = _pick_one_image_per_prompt(sample_dir, prompts)
+
+    eligible = [cid for cid in promoted_cids if cid in images_for and len(images_for[cid]) == len(prompts)]
+    if len(eligible) < 2:
+        logger.warning(
+            "pairwise finals: not enough eligible finalists with samples; "
+            "skipping tournament (have %d, need >=2).", len(eligible),
+        )
+        return ""
+
+    logger.info(
+        "pairwise finals: %d finalists × %d prompts = %d judge calls",
+        len(eligible), len(prompts), len(eligible) * (len(eligible) - 1) // 2 * len(prompts),
+    )
+    matches = run_tournament(eligible, prompts, images_for, judge)
+    if not matches:
+        return ""
+    entries = bootstrap_elo_cis(matches, n_resamples=1000, seed=0)
+    return render_leaderboard_md(entries)
+
+
+def _locate_sample_dir(runs_dir: Path, run_id: str) -> Optional[Path]:
+    """Derive the sample_dir for a finalist by convention.
+
+    sd-scripts writes to ``<run>/output/sample``; musubi-tuner writes to
+    ``<run>/output/samples``. We probe both and return whichever exists.
+    """
+    base = runs_dir / run_id / "output"
+    for sub in ("sample", "samples"):
+        candidate = base / sub
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _pick_one_image_per_prompt(sample_dir: Path, prompts: list[str]) -> list[Path]:
+    """Return one image path per prompt index, or fewer when some are missing."""
+    from bracket.orchestrator.scorer import _pair_samples_with_prompts
+
+    pair = _pair_samples_with_prompts(sample_dir, prompts)
+    out: list[Optional[Path]] = [None] * len(prompts)
+    for img, prompt in pair.items():
+        try:
+            idx = prompts.index(prompt)
+        except ValueError:
+            continue
+        if out[idx] is None:
+            out[idx] = img
+    return [p for p in out if p is not None]

@@ -35,6 +35,39 @@ def _seed_ledger(path: Path) -> Ledger:
     return ledger
 
 
+def test_proof_report_renders_pareto_section_when_multi_objective(tmp_path: Path):
+    """Configs with both ``in_dist_score`` and ``ood_score`` in their
+    components trigger a Pareto-front section with hypervolume CIs and
+    a per-config table marking dominated / non-dominated rows."""
+    ledger_path = tmp_path / "ledger.jsonl"
+    ledger = Ledger(ledger_path)
+    # Two non-dominated configs and one strictly-dominated config.
+    points = [
+        ("cfg-a", 0.10, 0.40),  # Pareto-optimal
+        ("cfg-b", 0.30, 0.20),  # Pareto-optimal
+        ("cfg-c", 0.40, 0.50),  # Dominated by both
+    ]
+    for i, (run_id, in_d, ood) in enumerate(points):
+        ledger.append({
+            # Distinct learning_rate per row so each is its own config_id.
+            "run_id": f"cand-{run_id}", "role": "candidate",
+            "config": {"learning_rate": 1e-4 * (i + 1)},
+            "config_id": run_id,
+            "score": in_d + ood,
+            "score_components": {"in_dist_score": in_d, "ood_score": ood},
+            "n_steps": 100, "duration_s": 60.0, "timestamp": 1.0,
+        })
+    out = generate_report(ledger_path, tmp_path / "report.md")
+    body = out.read_text(encoding="utf-8")
+    assert "Pareto front" in body
+    assert "Hypervolume" in body
+    # The two non-dominated configs must be marked with the star marker.
+    star_count = body.count("| ★ |")
+    dot_count = body.count("| · |")
+    assert star_count == 2
+    assert dot_count == 1
+
+
 def test_proof_report_marks_orchestrator_as_winner(tmp_path: Path):
     ledger_path = tmp_path / "ledger.jsonl"
     _seed_ledger(ledger_path)

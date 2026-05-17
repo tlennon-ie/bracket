@@ -12,7 +12,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional, Protocol
 
 
 @dataclass(frozen=True)
@@ -125,6 +125,31 @@ class SampleJudge(ABC):
             mean_artifact_free=sum(j.artifact_free for j in scored) / len(scored),
             judgements=tuple(judgements),
         )
+
+
+# ─── Pairwise judging ─────────────────────────────────────────────
+
+
+# Result of a single pairwise A/B comparison.
+#   -1 = image A wins, 0 = tie, +1 = image B wins.
+PairwiseOutcome = Literal[-1, 0, 1]
+
+
+class PairwiseJudge(Protocol):
+    """A judge that prefers one image over another given a shared prompt.
+
+    Implementations should be best-effort — a transient API error must
+    not abort an entire tournament. On failure the implementation may
+    return 0 (tie) and log the error; callers should treat ties as
+    "no information" when fitting the Bradley-Terry model.
+    """
+
+    def judge_pair(
+        self, image_a: Path, image_b: Path, prompt: str,
+    ) -> PairwiseOutcome: ...
+
+    def eject(self) -> None:
+        """Release resources (e.g. VLM VRAM). Default no-op for stubs."""
 
 
 # Sample-prompts files in sd-scripts / musubi-tuner format are one prompt per

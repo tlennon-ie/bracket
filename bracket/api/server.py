@@ -231,6 +231,8 @@ def _build_snapshot_payload(
         judge_summary=snap.judge_summary,
         session_done=bool(snap.session_done),
         current_steps_per_sec=snap.current_steps_per_sec,
+        killed_by_pruner=int(snap.killed_by_pruner),
+        running_runs=int(snap.running_runs),
         ts=time.time(),
     )
 
@@ -309,6 +311,33 @@ def _start_session_impl(
             message="Missing required fields: " + ", ".join(missing),
         )
 
+    # Validate objectives shape. Single-element list = legacy scalar TPE.
+    # Exactly two valid score-component keys = NSGA-II multi-objective.
+    _ALLOWED_OBJECTIVES = {"score", "in_dist_score", "ood_score"}
+    objectives = list(req.objectives or ["score"])
+    if len(objectives) == 0 or len(objectives) > 2:
+        return StartSessionResponse(
+            status="bad_request",
+            message=(
+                f"objectives must have 1 or 2 entries; got {len(objectives)}. "
+                f"Valid: {sorted(_ALLOWED_OBJECTIVES)}"
+            ),
+        )
+    for obj in objectives:
+        if obj not in _ALLOWED_OBJECTIVES:
+            return StartSessionResponse(
+                status="bad_request",
+                message=(
+                    f"unknown objective {obj!r}; "
+                    f"must be one of {sorted(_ALLOWED_OBJECTIVES)}"
+                ),
+            )
+    if len(objectives) == 2 and objectives[0] == objectives[1]:
+        return StartSessionResponse(
+            status="bad_request",
+            message="objectives must be distinct when two are supplied.",
+        )
+
     # Build trainer via the preset factory.
     try:
         trainer = preset.trainer_factory(
@@ -357,12 +386,13 @@ def _start_session_impl(
     )
     sample_every = int(req.max_steps) if sp is not None else None
 
+    # `judge_disable_thinking=True` translates to enable_thinking=False
+    # in the chat_template_kwargs sent to LMStudio. Leave None when the
+    # user wants the model's default behaviour. Defined unconditionally
+    # so the pairwise-judge branch below can reuse it.
+    enable_thinking: Optional[bool] = False if req.judge_disable_thinking else None
     judge = None
     if req.judge_method == "lmstudio" and sp is not None:
-        # `judge_disable_thinking=True` translates to enable_thinking=False
-        # in the chat_template_kwargs sent to LMStudio. Leave None when the
-        # user wants the model's default behaviour.
-        enable_thinking = False if req.judge_disable_thinking else None
         judge = LMStudioJudge(LMStudioJudgeConfig(
             base_url=req.judge_base_url, model=req.judge_model,
             enable_thinking=enable_thinking,
@@ -376,8 +406,15 @@ def _start_session_impl(
             dq_threshold=float(getattr(req, "clip_iqa_dq_threshold", 0.30) or 0.30),
         ))
 
-    if req.search_method == "optuna":
-        controller: SearchController = OptunaTPESearch(
+    # Two objectives request NSGA-II. Single objective uses TPE (default)
+    # or Random. ``objectives`` was validated above so we trust its shape.
+    if len(objectives) == 2:
+        from bracket.search.optuna_multi import OptunaNSGAIISearch
+        controller: SearchController = OptunaNSGAIISearch(
+            seed=0, objectives=tuple(objectives),
+        )
+    elif req.search_method == "optuna":
+        controller = OptunaTPESearch(
             seed=0, n_startup_trials=int(req.optuna_startup),
         )
     else:
@@ -414,7 +451,23 @@ def _start_session_impl(
             stop_event=session.stop_event,
             search_overrides=search_overrides,
             use_history_priors=bool(getattr(req, "use_history_priors", False)),
+            enable_divergence_killer=bool(req.enable_divergence_killer),
+            enable_two_rung_asha=bool(req.enable_two_rung_asha),
         )
+
+    # Pairwise judge for the BT tournament. Reuses the LMStudio config
+    # since the user already authenticated the same server for the
+    # single-image judge. Only built when explicitly enabled.
+    pairwise_judge = None
+    if bool(req.enable_pairwise_finals) and req.judge_method == "lmstudio":
+        from bracket.judge.lmstudio_pairwise import (
+            LMStudioPairwiseConfig, LMStudioPairwiseJudge,
+        )
+        pairwise_judge = LMStudioPairwiseJudge(LMStudioPairwiseConfig(
+            base_url=req.judge_base_url,
+            model=req.judge_model,
+            enable_thinking=enable_thinking,
+        ))
 
     finals_fn = None
     if int(req.finals_top_k) > 0:
@@ -429,6 +482,7 @@ def _start_session_impl(
                 sample_judge=judge,
                 loss_weight=float(req.judge_loss_weight),
                 sample_weight=float(req.judge_sample_weight),
+                pairwise_judge=pairwise_judge,
             )
 
     total_target = (1 + int(req.budget)) * int(req.seeds)

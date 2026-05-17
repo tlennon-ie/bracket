@@ -28,6 +28,12 @@ def generate_report(ledger_path: Path, out_path: Path) -> Path:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     md = _render(rows)
+    # If the finals stage wrote a pairwise leaderboard sidecar, append it.
+    pairwise_sidecar = ledger_path.parent / "pairwise_leaderboard.md"
+    if pairwise_sidecar.exists():
+        extra = pairwise_sidecar.read_text(encoding="utf-8").strip()
+        if extra:
+            md = md.rstrip() + "\n\n" + extra + "\n"
     out_path.write_text(md, encoding="utf-8")
     return out_path
 
@@ -246,6 +252,13 @@ def _render(rows: list[dict]) -> str:
                 f"`{j['mean_visual_quality']:.2f}` | `{j['mean_artifact_free']:.2f}` |"
             )
 
+    # Pareto front — only renders when both in_dist_score and ood_score
+    # are present in score_components for at least 2 configs.
+    pareto_section = _render_pareto_section(scored_aggs)
+    if pareto_section:
+        lines.append("")
+        lines.append(pareto_section)
+
     # Disqualifications
     if disqualified_runs:
         lines.append("")
@@ -327,6 +340,64 @@ def _mean_judge(scored: list[dict]) -> Optional[dict]:
         return None
     keys = ("mean_overall", "mean_prompt_adherence", "mean_visual_quality", "mean_artifact_free")
     return {k: statistics.fmean(j[k] for j in judges if k in j) for k in keys}
+
+
+def _render_pareto_section(scored_aggs: list[dict]) -> str:
+    """Render the Pareto-front section, or '' if multi-objective data is
+    missing.
+
+    Activates when at least two configs report both ``in_dist_score`` and
+    ``ood_score`` in ``score_components``. Both are lower-is-better.
+    """
+    pts: list[tuple[float, float, dict]] = []
+    for a in scored_aggs:
+        comps = a.get("score_components") or {}
+        in_d = comps.get("in_dist_score")
+        ood = comps.get("ood_score")
+        if in_d is None or ood is None:
+            continue
+        try:
+            pts.append((float(in_d), float(ood), a))
+        except (TypeError, ValueError):
+            continue
+    if len(pts) < 2:
+        return ""
+
+    from bracket.search.optuna_multi import (
+        bootstrap_hypervolume_ci,
+        compute_pareto_front,
+    )
+
+    coords = [(p[0], p[1]) for p in pts]
+    front_idx = set(compute_pareto_front(coords))
+    median_hv, lo_hv, hi_hv = bootstrap_hypervolume_ci(
+        coords, n_resamples=1000, seed=0,
+    )
+
+    out: list[str] = []
+    out.append("## Pareto front — in-distribution vs OOD")
+    out.append("")
+    out.append(
+        "Both objectives lower-is-better. Dominated configs are greyed "
+        "(`·`); non-dominated configs (`★`) are Pareto-optimal."
+    )
+    out.append("")
+    out.append(
+        f"Hypervolume (1000 bootstrap resamples): median **{median_hv:.4f}**, "
+        f"95% CI [{lo_hv:.4f}, {hi_hv:.4f}]."
+    )
+    out.append("")
+    out.append("| status | config_id | in_dist_score | ood_score |")
+    out.append("|---|---|---|---|")
+    ranked = sorted(
+        enumerate(pts), key=lambda kv: (kv[1][0] + kv[1][1]),
+    )
+    for idx, (in_d, ood, a) in ranked:
+        marker = "★" if idx in front_idx else "·"
+        out.append(
+            f"| {marker} | `{a['config_id']}` | `{in_d:.4f}` | `{ood:.4f}` |"
+        )
+    return "\n".join(out)
 
 
 def _ascii_histogram(values: list[float], bins: int = 10, width: int = 40) -> str:

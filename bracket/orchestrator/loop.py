@@ -17,12 +17,19 @@ from pathlib import Path
 from typing import Optional
 
 from bracket.dataset.validator import validate_dataset_toml
+from bracket.frame import LossFrame
 from bracket.judge.base import SampleJudge, parse_judge_prompts_file
 from bracket.orchestrator.history import (
     lookup_warmstart_configs,
     record_session_winner,
 )
 from bracket.orchestrator.ledger import Ledger
+from bracket.orchestrator.pruner import (
+    DivergenceKiller,
+    PartialResult,
+    Pruner,
+    promote_top_half,
+)
 from bracket.orchestrator.runner import RunLauncher, RunResult
 from bracket.orchestrator.scorer import Scorer, ScoreReport
 from bracket.search.controller import LedgerEntry, SearchController
@@ -76,7 +83,13 @@ def _execute_one(
     save_every_n_steps: Optional[int] = None,
     save_state: bool = False,
     resume_from: Optional[Path] = None,
-) -> tuple[RunResult, ScoreReport]:
+    # Pruner integration. When provided, _execute_one polls the live
+    # tfevents file each tick and asks ``pruner.should_kill_divergent``
+    # whether to stop the trainer early. The collected frames are
+    # returned alongside RunResult/ScoreReport so the caller can feed
+    # them into the killer's peer pool after the run completes.
+    pruner: Optional[Pruner] = None,
+) -> tuple[RunResult, ScoreReport, list[LossFrame]]:
     spec = trainer.prepare_run(
         run_dir=run_dir,
         config=config,
@@ -90,7 +103,14 @@ def _execute_one(
         resume_from=resume_from,
     )
     log_path = run_dir / "logs" / "stdout.log"
-    result = launcher.launch(run_id, spec, log_path)
+    live_frames: list[LossFrame] = []
+    live_check = _build_live_check(
+        run_id=run_id,
+        spec=spec,
+        pruner=pruner,
+        frames_sink=live_frames,
+    )
+    result = launcher.launch(run_id, spec, log_path, live_check=live_check)
     score = scorer.score_run(
         tfevents_path=result.tfevents_path,
         sample_dir=spec.sample_dir,
@@ -105,7 +125,69 @@ def _execute_one(
             scorer.sample_judge.eject()
         except Exception:  # noqa: BLE001 — eject must never block the loop
             pass
-    return result, score
+    return result, score, live_frames
+
+
+def _build_live_check(
+    *,
+    run_id: str,
+    spec,  # LaunchSpec — typed loose to avoid circular import noise
+    pruner: Optional[Pruner],
+    frames_sink: list[LossFrame],
+):
+    """Build a callback the launcher polls each second.
+
+    Reads the trainer's live tfevents file (when one exists yet) and
+    consults the pruner. Returns None when no pruner is configured or
+    the file is not yet present — i.e. cheap fast-path when the killer
+    is disabled.
+    """
+    if pruner is None:
+        return None
+
+    glob_pattern = spec.tfevents_glob
+    state: dict[str, object] = {"path": None, "last_step": -1}
+
+    def _resolve_path() -> Optional[Path]:
+        cached = state.get("path")
+        if isinstance(cached, Path) and cached.exists():
+            return cached
+        import glob as _glob
+        matches = sorted(_glob.glob(glob_pattern, recursive=True))
+        if not matches:
+            return None
+        path = Path(max(matches, key=lambda p: Path(p).stat().st_size if Path(p).exists() else 0))
+        state["path"] = path
+        return path
+
+    def _check() -> Optional[str]:
+        path = _resolve_path()
+        if path is None:
+            return None
+        # Drain new frames; the tail's drain_once() is idempotent and cheap.
+        try:
+            from bracket.tfevents_reader import TFEventsTail
+            new_frames: list[LossFrame] = []
+            tail = TFEventsTail(
+                event_path=str(path),
+                on_frame=new_frames.append,
+            )
+            tail.drain_once()
+        except Exception:  # noqa: BLE001 — never break training over a tail glitch
+            logger.exception("pruner: failed to drain tfevents for %s", run_id)
+            return None
+        # frames_sink only grows; reset isn't needed since drain_once() always
+        # re-reads from step 0 with a fresh smoother. Replace the sink wholesale.
+        frames_sink.clear()
+        frames_sink.extend(new_frames)
+        if not new_frames:
+            return None
+        if pruner.should_kill_divergent(run_id, new_frames):
+            latest = new_frames[-1]
+            return f"divergent(step={latest.step},loss={latest.smoothed_loss:.4g})"
+        return None
+
+    return _check
 
 
 def _record(
@@ -226,12 +308,47 @@ def orchestrate(
     search_overrides: Optional[SearchOverrides] = None,
     use_history_priors: bool = False,
     history_db_path: Optional[Path] = None,
+    # Pruning. ``enable_divergence_killer`` adds the cheap NaN/peer-sigma
+    # check; default ON because the cost is negligible and the value of
+    # killing a blown-up trial after a couple seconds is high.
+    # ``enable_two_rung_asha`` opts into a halving schedule that runs every
+    # configuration to ``max_steps_per_run // 4`` first, then promotes the
+    # top-50% to the full budget (resuming from rung-1 state when the
+    # trainer supports it). Default OFF — it changes the run set.
+    enable_divergence_killer: bool = True,
+    enable_two_rung_asha: bool = False,
 ) -> OrchestrationResult:
     """`n_curated` controls the warm-start: number of curated configs to try
     after the baseline and before the search controller takes over. None or
     negative = run all configs the trainer publishes; 0 = skip warm-start
     entirely (legacy behaviour); positive int = cap. Each curated config
     counts as one candidate against `budget_runs`."""
+    if enable_two_rung_asha:
+        # Two-rung ASHA wraps this same function, but recursively disables
+        # the flag so we don't infinite-loop.
+        from bracket.orchestrator.asha import orchestrate_two_rung
+        return orchestrate_two_rung(
+            trainer=trainer,
+            dataset_toml=dataset_toml,
+            output_dir=output_dir,
+            controller=controller,
+            budget_runs=budget_runs,
+            max_steps_per_run=max_steps_per_run,
+            max_wall_seconds_per_run=max_wall_seconds_per_run,
+            base_seed=base_seed,
+            seeds_per_config=seeds_per_config,
+            skip_baseline=skip_baseline,
+            n_curated=n_curated,
+            mirror_stdout=mirror_stdout,
+            sample_prompts=sample_prompts,
+            sample_every_n_steps=sample_every_n_steps,
+            sample_judge=sample_judge,
+            loss_weight=loss_weight,
+            sample_weight=sample_weight,
+            stop_event=stop_event,
+            search_overrides=search_overrides,
+            enable_divergence_killer=enable_divergence_killer,
+        )
     output_dir = Path(output_dir).resolve()
 
     validation_result = validate_dataset_toml(dataset_toml)
@@ -269,6 +386,9 @@ def orchestrate(
         sample_weight=sample_weight,
         clip_iqa_judge=clip_iqa_judge if sample_prompts is not None else None,
         clip_iqa_dq_threshold=clip_iqa_dq_threshold,
+    )
+    pruner: Optional[DivergenceKiller] = (
+        DivergenceKiller() if enable_divergence_killer else None
     )
     space = trainer.declare_search_space()
     space = apply_search_overrides(space, search_overrides)
@@ -384,13 +504,16 @@ def orchestrate(
             run_dir = runs_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             logger.info("running baseline %s seed=%d", run_id, seed)
-            result, score = _execute_one(
+            result, score, live_frames = _execute_one(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
                 sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
                 judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
+                pruner=pruner,
             )
+            if pruner is not None and not result.killed_by_pruner:
+                pruner.record_completed(live_frames)
             entry = _record(
                 ledger, run_id=run_id, role="baseline", cfg_id=cfg_id,
                 config_dict=config_dict, seed=seed, seed_idx=seed_idx,
@@ -476,13 +599,16 @@ def orchestrate(
             run_id = _make_run_id("cur", candidate_idx, seed_idx)
             run_dir = runs_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
-            result, score = _execute_one(
+            result, score, live_frames = _execute_one(
                 trainer=trainer, config=cur_config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
                 sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
                 judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
+                pruner=pruner,
             )
+            if pruner is not None and not result.killed_by_pruner:
+                pruner.record_completed(live_frames)
             entry = _record(
                 ledger, run_id=run_id, role="curated", cfg_id=cfg_id,
                 config_dict=config_dict, seed=seed, seed_idx=seed_idx,
@@ -519,13 +645,16 @@ def orchestrate(
             run_id = _make_run_id("cand", candidate_idx, seed_idx)
             run_dir = runs_dir / run_id
             run_dir.mkdir(parents=True, exist_ok=True)
-            result, score = _execute_one(
+            result, score, live_frames = _execute_one(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
                 sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
                 judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
+                pruner=pruner,
             )
+            if pruner is not None and not result.killed_by_pruner:
+                pruner.record_completed(live_frames)
             entry = _record(
                 ledger, run_id=run_id, role="candidate", cfg_id=cfg_id,
                 config_dict=config_dict, seed=seed, seed_idx=seed_idx,
