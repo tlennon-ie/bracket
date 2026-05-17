@@ -24,11 +24,18 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from bracket.trainer.base import LaunchSpec
 
 logger = logging.getLogger(__name__)
+
+
+# A live-check callback is polled every ``poll_interval`` seconds while the
+# trainer is running. Returning a non-empty string asks the launcher to kill
+# the subprocess and surface the reason via ``RunResult.error`` /
+# ``killed_by_pruner``. Returning None / empty string means "keep running".
+LiveCheck = Callable[[], Optional[str]]
 
 
 @dataclass
@@ -41,6 +48,8 @@ class RunResult:
     log_path: Path
     error: Optional[str] = None
     killed_by_timeout: bool = False
+    killed_by_pruner: bool = False
+    pruner_reason: Optional[str] = None
 
 
 class RunLauncher:
@@ -58,7 +67,14 @@ class RunLauncher:
         self.stop_event = stop_event
         self._current_proc: Optional[subprocess.Popen] = None
 
-    def launch(self, run_id: str, spec: LaunchSpec, log_path: Path) -> RunResult:
+    def launch(
+        self,
+        run_id: str,
+        spec: LaunchSpec,
+        log_path: Path,
+        *,
+        live_check: Optional[LiveCheck] = None,
+    ) -> RunResult:
         """Spawn the trainer with stdout redirected DIRECTLY to log_path.
 
         We deliberately do NOT use subprocess.PIPE for stdout. Reason: tqdm
@@ -111,6 +127,8 @@ class RunLauncher:
             self._current_proc = proc
             killed_by_timeout = False
             killed_by_user = False
+            killed_by_pruner = False
+            pruner_reason: Optional[str] = None
             deadline = time.monotonic() + self.max_wall_seconds
             poll_interval = 1.0
             try:
@@ -128,6 +146,24 @@ class RunLauncher:
                             except subprocess.TimeoutExpired:
                                 exit_code = None
                             break
+                        if live_check is not None:
+                            try:
+                                reason = live_check()
+                            except Exception:  # noqa: BLE001 — live_check must never abort the run
+                                logger.exception("run %s: live_check raised", run_id)
+                                reason = None
+                            if reason:
+                                killed_by_pruner = True
+                                pruner_reason = str(reason)
+                                logger.warning(
+                                    "run %s: killed by pruner — %s", run_id, pruner_reason,
+                                )
+                                self._kill(proc)
+                                try:
+                                    exit_code = proc.wait(timeout=10)
+                                except subprocess.TimeoutExpired:
+                                    exit_code = None
+                                break
                         if time.monotonic() >= deadline:
                             killed_by_timeout = True
                             logger.warning("run %s exceeded %ds; killing", run_id, self.max_wall_seconds)
@@ -149,6 +185,8 @@ class RunLauncher:
         tfevents = self._find_tfevents(spec.tfevents_glob)
         if killed_by_user:
             err = "stopped_by_user"
+        elif killed_by_pruner:
+            err = f"pruned:{pruner_reason}" if pruner_reason else "pruned"
         elif killed_by_timeout:
             err = "timeout"
         elif exit_code == 0:
@@ -163,6 +201,8 @@ class RunLauncher:
             tfevents_path=tfevents,
             log_path=log_path,
             killed_by_timeout=killed_by_timeout,
+            killed_by_pruner=killed_by_pruner,
+            pruner_reason=pruner_reason,
             error=err,
         )
 

@@ -119,7 +119,7 @@ def run_finals_stage(
             run_dir.mkdir(parents=True, exist_ok=True)
             logger.info("finals: cand=%d seed_idx=%d cfg_id=%s run_id=%s",
                         finalist_idx, seed_idx, cid, run_id)
-            result, score = _execute_one(
+            result, score, _live = _execute_one(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=finals_max_steps, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,

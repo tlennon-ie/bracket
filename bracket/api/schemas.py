@@ -143,6 +143,26 @@ class StartSessionRequest(_Base):
     # (toggle in the search), or None (use trainer default).
     gradient_checkpointing_mode: Optional[str] = None
 
+    # Pruning. ``enable_divergence_killer`` adds a cheap NaN/peer-sigma
+    # check that kills clearly-blown-up trials within a couple of seconds.
+    # ``enable_two_rung_asha`` opts into a halving schedule: every config
+    # runs to ``max_steps // 4`` first, then the top-50% by rung-1 score
+    # promotes to the full step budget. Default OFF — it changes the run
+    # set (rung-1 entries are recorded under non-reporting roles).
+    enable_divergence_killer: bool = True
+    enable_two_rung_asha: bool = False
+
+    # Multi-objective optimisation. Single-element list (default) = legacy
+    # scalar TPE optimisation. Two-element list of valid score-component
+    # keys (e.g. ``["in_dist_score", "ood_score"]``) = NSGA-II + Pareto
+    # front in the report. Other shapes are rejected with HTTPException 400.
+    objectives: list[str] = Field(default_factory=lambda: ["score"])
+
+    # Bradley-Terry pairwise tournament after the finals stage. Opt-in:
+    # 7-10x the judge load on the final K configs. Requires a configured
+    # ``PairwiseJudge`` (currently only ``lmstudio_pairwise``).
+    enable_pairwise_finals: bool = False
+
     # Preset-specific values, keyed by FieldSpec.name
     preset_field_values: dict[str, str] = Field(default_factory=dict)
 
@@ -223,6 +243,12 @@ class MonitorSnapshotOut(_Base):
     # Average iterations-per-second for the current run (None until we have
     # at least 2 tfevents samples to compute a delta).
     current_steps_per_sec: Optional[float] = None
+
+    # Pruner indicators surfaced on the Monitor page when the divergence
+    # killer is active. ``killed_by_pruner`` = rows whose error starts with
+    # ``"pruned"``; ``running_runs`` is 0 or 1 today (single-run-at-a-time).
+    killed_by_pruner: int = 0
+    running_runs: int = 0
 
     # WS-only metadata; harmless on REST.
     ts: float = 0.0

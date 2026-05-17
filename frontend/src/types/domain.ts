@@ -81,6 +81,8 @@ export interface MonitorSnapshot {
 	judge_summary: string;
 	session_done: boolean;
 	current_steps_per_sec: number | null;
+	killed_by_pruner: number;
+	running_runs: number;
 	ts: number;
 }
 
@@ -168,6 +170,10 @@ export interface StartSessionRequest {
 	batch_size_min: number | null;
 	batch_size_max: number | null;
 	gradient_checkpointing_mode: "on" | "off" | "search" | null;
+	enable_divergence_killer: boolean;
+	enable_two_rung_asha: boolean;
+	objectives: string[];
+	enable_pairwise_finals: boolean;
 	preset_field_values: Record<string, string>;
 }
 

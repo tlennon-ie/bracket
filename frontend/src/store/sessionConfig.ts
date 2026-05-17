@@ -35,6 +35,10 @@ const DEFAULTS: StartSessionRequest = {
 	batch_size_min: null,
 	batch_size_max: null,
 	gradient_checkpointing_mode: null,
+	enable_divergence_killer: true,
+	enable_two_rung_asha: false,
+	objectives: ["score"],
+	enable_pairwise_finals: false,
 	preset_field_values: {},
 };
 

@@ -67,6 +67,11 @@ class MonitorSnapshot:
     # currently-running run. None when there's nothing in-flight or we
     # don't yet have enough samples to compute a rate.
     current_steps_per_sec: Optional[float] = None
+    # Pruner indicators. ``killed_by_pruner`` counts trials the divergence
+    # killer stopped early; ``running`` counts in-flight trials (0 or 1
+    # for the current single-run-at-a-time orchestrator).
+    killed_by_pruner: int = 0
+    running_runs: int = 0
 
 
 def read_ledger(ledger_path: Path) -> list[dict]:
@@ -354,6 +359,15 @@ def build_snapshot(
         and current_run is None
     )
 
+    # Count rows the divergence killer terminated. The runner records
+    # ``error="pruned:..."`` on those rows; we surface a small counter
+    # so the Monitor tab can show "killed: K / running: R / completed: C".
+    killed_by_pruner = sum(
+        1 for r in rows
+        if isinstance(r.get("error"), str) and r["error"].startswith("pruned")
+    )
+    running_runs = 1 if current_run is not None else 0
+
     return MonitorSnapshot(
         status_line=status_line,
         progress_pct=progress,
@@ -368,6 +382,8 @@ def build_snapshot(
         judge_summary=judge_summary,
         session_done=session_done,
         current_steps_per_sec=cur_steps_per_sec,
+        killed_by_pruner=killed_by_pruner,
+        running_runs=running_runs,
     )
 
 

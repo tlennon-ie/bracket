@@ -230,6 +230,8 @@ def _build_snapshot_payload(
         judge_summary=snap.judge_summary,
         session_done=bool(snap.session_done),
         current_steps_per_sec=snap.current_steps_per_sec,
+        killed_by_pruner=int(snap.killed_by_pruner),
+        running_runs=int(snap.running_runs),
         ts=time.time(),
     )
 
@@ -306,6 +308,33 @@ def _start_session_impl(
         return StartSessionResponse(
             status="bad_request",
             message="Missing required fields: " + ", ".join(missing),
+        )
+
+    # Validate objectives shape. Single-element list = legacy scalar TPE.
+    # Exactly two valid score-component keys = NSGA-II multi-objective.
+    _ALLOWED_OBJECTIVES = {"score", "in_dist_score", "ood_score"}
+    objectives = list(req.objectives or ["score"])
+    if len(objectives) == 0 or len(objectives) > 2:
+        return StartSessionResponse(
+            status="bad_request",
+            message=(
+                f"objectives must have 1 or 2 entries; got {len(objectives)}. "
+                f"Valid: {sorted(_ALLOWED_OBJECTIVES)}"
+            ),
+        )
+    for obj in objectives:
+        if obj not in _ALLOWED_OBJECTIVES:
+            return StartSessionResponse(
+                status="bad_request",
+                message=(
+                    f"unknown objective {obj!r}; "
+                    f"must be one of {sorted(_ALLOWED_OBJECTIVES)}"
+                ),
+            )
+    if len(objectives) == 2 and objectives[0] == objectives[1]:
+        return StartSessionResponse(
+            status="bad_request",
+            message="objectives must be distinct when two are supplied.",
         )
 
     # Build trainer via the preset factory.
@@ -393,6 +422,8 @@ def _start_session_impl(
             sample_weight=float(req.judge_sample_weight),
             stop_event=session.stop_event,
             search_overrides=search_overrides,
+            enable_divergence_killer=bool(req.enable_divergence_killer),
+            enable_two_rung_asha=bool(req.enable_two_rung_asha),
         )
 
     finals_fn = None

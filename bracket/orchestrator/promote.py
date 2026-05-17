@@ -137,7 +137,7 @@ def run_promoted(
         run_id, cid, max_steps, save_every_n_steps, save_state, resume_from,
     )
     start = time.monotonic()
-    result, score = _execute_one(
+    result, score, _live = _execute_one(
         trainer=trainer, config=config, dataset_toml=dataset_toml,
         max_steps=max_steps, seed=seed, run_dir=run_dir,
         launcher=launcher, scorer=scorer, run_id=run_id,
