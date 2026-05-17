@@ -314,6 +314,53 @@ def test_report_when_idle_is_404(client: TestClient) -> None:
     assert res.status_code == 404
 
 
+def test_report_auto_regenerates_when_ledger_is_newer(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path
+) -> None:
+    """If the user appends ledger rows after the last report render, GET
+    /report should regenerate before serving — otherwise the Results
+    page sits on "No runs in ledger" even though the orchestrator has
+    written new entries."""
+    fresh_session.state.output_dir = tmp_path
+
+    # Stale report from when the ledger was empty.
+    stale_body = "# Bracket · orchestration report\n\nNo runs in ledger.\n"
+    (tmp_path / "report.md").write_text(stale_body, encoding="utf-8")
+    # Force the stale report to look older than what we're about to write.
+    old_mtime = time.time() - 60
+    import os
+    os.utime(tmp_path / "report.md", (old_mtime, old_mtime))
+
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        json.dumps({
+            "run_id": "baseline-000-s0-1",
+            "role": "baseline",
+            "trainer_name": "sdxl-full-sd-scripts",
+            "search_space_name": "test",
+            "config_id": "abc123",
+            "config": {"learning_rate": 1e-6},
+            "seed": 42, "seed_idx": 0,
+            "score": 0.42,
+            "score_components": {"final_smoothed_loss": 0.40, "tail_slope": 0.02},
+            "judge_report": None,
+            "n_steps": 200, "duration_s": 60.0, "exit_code": 0,
+            "killed_by_timeout": False, "error": None, "disqualified": None,
+            "tfevents_path": "/x", "log_path": "/y", "sample_dir": "/z",
+            "timestamp": time.time(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/report")
+    assert res.status_code == 200
+    body = res.text
+    assert "No runs in ledger" not in body, (
+        "Expected the stale report to have been overwritten with the regenerated one"
+    )
+    assert "abc123" in body or "Training runs" in body
+
+
 # ───────────────────────────── judge status ─────────────────────────────
 
 

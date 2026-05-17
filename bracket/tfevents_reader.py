@@ -33,13 +33,17 @@ from bracket.frame import LossFrame
 logger = logging.getLogger(__name__)
 
 # Per-step scalar tag the trainer emits. Different trainers use different
-# tag names — musubi-tuner (Z-Image / Flux / Wan / Hunyuan / Qwen-Image)
-# writes "loss/current"; sd-scripts (SDXL / Flux.1 LoRA / Lumina / Anima
-# / SD3.5) writes "loss/average". We try each candidate and use the first
-# one present in the file. ``LOSS_TAG`` stays as a single-string public
-# constant for backwards compatibility with old callers.
+# tag names:
+#   * musubi-tuner (Z-Image / Flux-2-Klein / Wan / Hunyuan / Qwen-Image)
+#     writes ``loss/current``.
+#   * sd-scripts SDXL/SD3.5/Lumina/Anima writes a bare ``loss`` plus
+#     ``loss/epoch``. It does *not* emit ``loss/average``.
+#   * sd-scripts Flux.1 LoRA writes ``loss/average`` (kept for compat).
+# We try each candidate and use the first one present in the file.
+# ``LOSS_TAG`` stays as a single-string public constant for backwards
+# compatibility with old callers.
 LOSS_TAG = "loss/current"
-LOSS_TAG_CANDIDATES: tuple[str, ...] = ("loss/current", "loss/average")
+LOSS_TAG_CANDIDATES: tuple[str, ...] = ("loss/current", "loss/average", "loss")
 LR_TAG = "lr/unet"
 LR_TAG_CANDIDATES: tuple[str, ...] = ("lr/unet", "lr/textencoder")
 

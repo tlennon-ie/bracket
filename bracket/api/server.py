@@ -1014,7 +1014,13 @@ def _make_router() -> APIRouter:
 
     @router.get("/report")
     def report_get() -> Response:
-        """Current report.md content as text/markdown."""
+        """Current report.md content as text/markdown.
+
+        Auto-regenerates if ``ledger.jsonl`` is newer than ``report.md``
+        (or if no report exists yet but a ledger does) — otherwise the
+        Results page sits showing "No runs in ledger" until the user
+        clicks Regenerate manually.
+        """
 
         out_dir = get_session().snapshot().output_dir
         if out_dir is None:
@@ -1022,7 +1028,18 @@ def _make_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No session has been started yet.",
             )
-        report_path = Path(out_dir) / "report.md"
+        out = Path(out_dir)
+        ledger_path = out / "ledger.jsonl"
+        report_path = out / "report.md"
+
+        report_mtime = report_path.stat().st_mtime if report_path.exists() else 0.0
+        ledger_mtime = ledger_path.stat().st_mtime if ledger_path.exists() else 0.0
+        if ledger_path.exists() and ledger_mtime > report_mtime:
+            try:
+                generate_report(ledger_path, report_path)
+            except Exception:
+                logger.exception("auto-regenerating report failed; serving stale copy")
+
         if not report_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

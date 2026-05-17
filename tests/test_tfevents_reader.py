@@ -136,6 +136,37 @@ def test_missing_event_file_raises():
         TFEventsTail(event_path="/nonexistent/path", on_frame=lambda f: None)
 
 
+def _make_sdxl_full_event_file(tmp: Path, n_steps: int = 10) -> str:
+    """sd-scripts SDXL full-FT writes per-step loss under the bare ``loss``
+    tag (plus ``loss/epoch`` once per epoch) — no ``loss/current`` or
+    ``loss/average``. Pre-0.1.1 the reader missed this and disqualified
+    every SDXL run as ``empty_tfevents``."""
+    writer = EventFileWriter(str(tmp), max_queue_size=1024, flush_secs=0)
+    base = time.time()
+    for step in range(1, n_steps + 1):
+        _write_scalar(writer, "loss", 0.2 - 0.005 * step, step, base + step * 0.1)
+        _write_scalar(writer, "lr/unet", 1e-6, step, base + step * 0.1)
+    _write_scalar(writer, "loss/epoch", 0.15, 1, base + n_steps * 0.1)
+    writer.close()
+    files = sorted(p for p in tmp.glob("events.out.tfevents.*"))
+    assert files
+    return str(files[-1])
+
+
+def test_drain_picks_bare_loss_tag_for_sdxl_full():
+    with tempfile.TemporaryDirectory() as td:
+        path = _make_sdxl_full_event_file(Path(td), n_steps=12)
+        seen: list[LossFrame] = []
+        tail = TFEventsTail(event_path=path, on_frame=seen.append, ema_alpha=0.1)
+        n = tail.drain_once()
+        assert n == 12, "every per-step loss must be emitted"
+        assert [f.step for f in seen] == list(range(1, 13))
+        # The reader must prefer the per-step ``loss`` tag and ignore
+        # ``loss/epoch`` — otherwise we'd see one frame per epoch instead
+        # of one frame per step.
+        assert seen[0].raw_loss == pytest.approx(0.195)
+
+
 def test_callback_exception_does_not_break_iteration():
     """A misbehaving subscriber must not stop the tail or skip frames."""
     with tempfile.TemporaryDirectory() as td:
