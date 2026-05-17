@@ -151,6 +151,12 @@ class StartSessionRequest(_Base):
     # (toggle in the search), or None (use trainer default).
     gradient_checkpointing_mode: Optional[str] = None
 
+    # When True, the orchestrator prepends up to 3 best configs from the
+    # SQLite history DB for the current (trainer, search_space) pair
+    # onto the curated warm-start list. Default off — opt-in until users
+    # have at least one prior session to draw from.
+    use_history_priors: bool = False
+
     # Preset-specific values, keyed by FieldSpec.name
     preset_field_values: dict[str, str] = Field(default_factory=dict)
 

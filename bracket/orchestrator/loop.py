@@ -18,6 +18,10 @@ from typing import Optional
 
 from bracket.dataset.validator import validate_dataset_toml
 from bracket.judge.base import SampleJudge, parse_judge_prompts_file
+from bracket.orchestrator.history import (
+    lookup_warmstart_configs,
+    record_session_winner,
+)
 from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.runner import RunLauncher, RunResult
 from bracket.orchestrator.scorer import Scorer, ScoreReport
@@ -201,6 +205,8 @@ def orchestrate(
     sample_weight: float = 0.7,
     stop_event: Optional["__import__('threading').Event"] = None,
     search_overrides: Optional[SearchOverrides] = None,
+    use_history_priors: bool = False,
+    history_db_path: Optional[Path] = None,
 ) -> OrchestrationResult:
     """`n_curated` controls the warm-start: number of curated configs to try
     after the baseline and before the search controller takes over. None or
@@ -388,9 +394,36 @@ def orchestrate(
     # before handing off to the search controller. Each curated config
     # consumes `seeds_per_config` slots of budget_runs (which is in
     # seed-runs, matching controller.should_stop).
+    curated_base = trainer.curated_configs()
+    if use_history_priors:
+        history_dicts = lookup_warmstart_configs(
+            trainer.name, space.name, n=3, db_path=history_db_path,
+        )
+        existing_ids = {config_id(c.to_dict()) for c in curated_base}
+        prepended: list[TrainerConfig] = []
+        for cfg_dict in history_dicts:
+            try:
+                cfg = trainer.config_from_dict(cfg_dict)
+            except Exception as e:  # noqa: BLE001 — old configs may have stale keys
+                logger.warning(
+                    "history: skipping warm-start config (incompatible with current trainer): %s",
+                    e,
+                )
+                continue
+            cid = config_id(cfg.to_dict())
+            if cid in existing_ids:
+                continue
+            existing_ids.add(cid)
+            prepended.append(cfg)
+        if prepended:
+            logger.info(
+                "history: prepending %d warm-start config(s) for %s/%s",
+                len(prepended), trainer.name, space.name,
+            )
+        curated_base = prepended + list(curated_base)
     curated = [
         clamp_config_to_overrides(c, search_overrides)
-        for c in trainer.curated_configs()
+        for c in curated_base
     ]
     if n_curated is None or n_curated < 0:
         n_curated_target = len(curated)
@@ -487,6 +520,29 @@ def orchestrate(
         candidate_idx += 1
 
     best = _pick_best_by_config(history)
+
+    # Persist the session winner so subsequent sessions targeting the
+    # same (trainer, search_space) pair can warm-start from it. We only
+    # record when there's actually a winner — disqualified-only sessions
+    # have nothing useful to remember.
+    if best is not None and best.score is not None:
+        # Multi-seed sessions report best by mean; capture the mean too.
+        same_cfg = [
+            h for h in history
+            if h.score is not None and _config_id_from_history(h) == _config_id_from_history(best)
+        ]
+        mean_best = (
+            sum(h.score for h in same_cfg) / len(same_cfg) if same_cfg else best.score
+        )
+        record_session_winner(
+            trainer_name=trainer.name,
+            search_space_name=space.name,
+            best_config=dict(best.config),
+            best_score=float(mean_best),
+            n_seeds=len(same_cfg) or 1,
+            db_path=history_db_path,
+        )
+
     return OrchestrationResult(
         session_dir=output_dir,
         ledger_path=ledger.path,

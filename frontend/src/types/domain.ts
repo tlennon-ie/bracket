@@ -173,6 +173,7 @@ export interface StartSessionRequest {
 	batch_size_min: number | null;
 	batch_size_max: number | null;
 	gradient_checkpointing_mode: "on" | "off" | "search" | null;
+	use_history_priors?: boolean;
 	preset_field_values: Record<string, string>;
 }
 

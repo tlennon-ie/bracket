@@ -7,6 +7,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -176,6 +177,15 @@ function RunPage() {
 						value={config.n_curated}
 						onChange={(v) => setField("n_curated", v)}
 					/>
+					<Label className="flex items-center gap-2 normal-case tracking-normal text-xs text-muted-foreground">
+						<Checkbox
+							checked={!!config.use_history_priors}
+							onCheckedChange={(checked) =>
+								setField("use_history_priors", !!checked)
+							}
+						/>
+						Warm-start from past session winners (history priors)
+					</Label>
 				</CardContent>
 			</Card>
 

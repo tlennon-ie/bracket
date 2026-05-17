@@ -36,6 +36,7 @@ const DEFAULTS: StartSessionRequest = {
 	batch_size_min: null,
 	batch_size_max: null,
 	gradient_checkpointing_mode: null,
+	use_history_priors: false,
 	preset_field_values: {},
 };
 

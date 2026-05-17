@@ -401,6 +401,7 @@ def _start_session_impl(
             sample_weight=float(req.judge_sample_weight),
             stop_event=session.stop_event,
             search_overrides=search_overrides,
+            use_history_priors=bool(getattr(req, "use_history_priors", False)),
         )
 
     finals_fn = None

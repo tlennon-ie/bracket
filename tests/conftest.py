@@ -20,6 +20,16 @@ from bracket.dataset.validator import ValidationResult
 from bracket.orchestrator import loop as _orchestrator_loop
 
 
+@pytest.fixture(autouse=True)
+def _isolate_history_db(tmp_path_factory, monkeypatch) -> Iterator[None]:
+    """Point ``BRACKET_HISTORY_DB`` at a throwaway path so orchestrator
+    tests that don't explicitly pass ``history_db_path`` never touch the
+    user's real ``~/.cache/bracket/history.db``."""
+    db = tmp_path_factory.mktemp("history") / "history.db"
+    monkeypatch.setenv("BRACKET_HISTORY_DB", str(db))
+    yield
+
+
 _PASS = ValidationResult(is_valid=True, errors=[], summary="ok (test stub)")
 
 
@@ -39,6 +49,7 @@ def _stub_dataset_validation_for_orchestrator_tests(
         "test_orchestrator_loop",
         "test_resume_guard",
         "test_finals",
+        "test_history",
     }
     if module_name not in targeted:
         yield
