@@ -366,6 +366,7 @@ def _start_session_impl(
         judge = LMStudioJudge(LMStudioJudgeConfig(
             base_url=req.judge_base_url, model=req.judge_model,
             enable_thinking=enable_thinking,
+            n_samples=max(1, int(getattr(req, "judge_n_samples", 1) or 1)),
         ))
 
     if req.search_method == "optuna":

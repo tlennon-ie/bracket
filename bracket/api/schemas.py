@@ -137,6 +137,11 @@ class StartSessionRequest(_Base):
     # equivalent (= leave default) is encoded as False here so the field
     # survives JSON round-trip cleanly.
     judge_disable_thinking: bool = False
+    # Number of VLM samples per image for self-consistency. >1 enables
+    # sampling at a non-zero temperature and reports the median + a
+    # per-image score variance (max std across the four scored axes).
+    # Default 1 = current deterministic behaviour.
+    judge_n_samples: int = 1
 
     # Search-range overrides. Any/all may be left null — the trainer's
     # default knob range (typically VRAM-tier aware) is used for any knob

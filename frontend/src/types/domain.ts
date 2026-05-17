@@ -168,6 +168,7 @@ export interface StartSessionRequest {
 	judge_loss_weight: number;
 	judge_sample_weight: number;
 	judge_disable_thinking: boolean;
+	judge_n_samples?: number;
 	lr_min: number | null;
 	lr_max: number | null;
 	batch_size_min: number | null;

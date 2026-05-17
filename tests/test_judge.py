@@ -292,6 +292,137 @@ def test_lmstudio_payload_sets_enable_thinking_false_when_opted_in():
     assert payload.get("chat_template_kwargs") == {"enable_thinking": False}
 
 
+class _FakeResponse:
+    """Stand-in for a urllib HTTP response — exposes only what
+    LMStudioJudge._post() actually uses (a context manager + read())."""
+
+    def __init__(self, body: str) -> None:
+        self._body = body.encode("utf-8")
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_a) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _make_response(pa: float, vq: float, af: float) -> _FakeResponse:
+    """Build a minimal OpenAI-shape response body with the three scored axes."""
+    import json as _json
+    content = _json.dumps({
+        "prompt_adherence": pa,
+        "visual_quality": vq,
+        "artifact_free": af,
+    })
+    body = _json.dumps({"choices": [{"message": {"content": content}}]})
+    return _FakeResponse(body)
+
+
+def test_lmstudio_n_samples_one_keeps_old_behaviour(monkeypatch, tmp_path):
+    """Default config (n_samples=1) must round-trip exactly one HTTP call
+    and report score_variance=0.0, judge_uncertain=False."""
+    img = tmp_path / "a.png"; _write_image(img)
+    calls = {"n": 0}
+
+    def _fake_urlopen(_req, **_kwargs):
+        calls["n"] += 1
+        return _make_response(8.0, 7.0, 9.0)
+
+    import bracket.judge.lmstudio as lm
+    monkeypatch.setattr(lm.urllib.request, "urlopen", _fake_urlopen)
+    judge = LMStudioJudge(LMStudioJudgeConfig(model="any"))
+    res = judge.judge_image(img, "a cat")
+    assert calls["n"] == 1
+    assert res.error is None
+    assert res.score_variance == pytest.approx(0.0)
+    assert res.judge_uncertain is False
+    assert res.prompt_adherence == pytest.approx(8.0)
+    assert res.overall == pytest.approx((8.0 + 7.0 + 9.0) / 3.0)
+
+
+def test_lmstudio_n_samples_takes_median_and_reports_variance(monkeypatch, tmp_path):
+    """When n_samples > 1, the per-axis scores must be the median and
+    score_variance must be the max std across the four axes
+    (prompt_adherence, visual_quality, artifact_free, overall)."""
+    img = tmp_path / "a.png"; _write_image(img)
+    # Three calls; values per axis to verify median picks the middle.
+    responses = iter([
+        _make_response(8.0, 7.0, 9.0),
+        _make_response(6.0, 8.0, 7.0),
+        _make_response(10.0, 9.0, 8.0),
+    ])
+
+    def _fake_urlopen(_req, **_kwargs):
+        return next(responses)
+
+    import bracket.judge.lmstudio as lm
+    monkeypatch.setattr(lm.urllib.request, "urlopen", _fake_urlopen)
+    cfg = LMStudioJudgeConfig(
+        model="any", n_samples=3,
+        variance_threshold=0.5,  # tiny — these scores definitely exceed it
+    )
+    judge = LMStudioJudge(cfg)
+    res = judge.judge_image(img, "a cat")
+    # Median per axis: pa = median(8,6,10) = 8; vq = median(7,8,9) = 8; af = median(9,7,8) = 8.
+    assert res.prompt_adherence == pytest.approx(8.0)
+    assert res.visual_quality == pytest.approx(8.0)
+    assert res.artifact_free == pytest.approx(8.0)
+    # The three sampled overall values are 8.0, 7.0, 9.0 → median 8.0
+    assert res.overall == pytest.approx(8.0)
+    assert res.score_variance > 0.0
+    # variance > 0.5 threshold → flagged
+    assert res.judge_uncertain is True
+
+
+def test_lmstudio_n_samples_below_threshold_is_not_uncertain(monkeypatch, tmp_path):
+    """When the VLM is internally consistent (low variance), the run is
+    NOT flagged uncertain even though n_samples > 1."""
+    img = tmp_path / "a.png"; _write_image(img)
+    responses = iter([
+        _make_response(8.0, 7.0, 9.0),
+        _make_response(8.0, 7.0, 9.0),
+        _make_response(8.0, 7.0, 9.0),
+    ])
+
+    def _fake_urlopen(_req, **_kwargs):
+        return next(responses)
+
+    import bracket.judge.lmstudio as lm
+    monkeypatch.setattr(lm.urllib.request, "urlopen", _fake_urlopen)
+    judge = LMStudioJudge(LMStudioJudgeConfig(
+        model="any", n_samples=3, variance_threshold=1.5,
+    ))
+    res = judge.judge_image(img, "a cat")
+    assert res.score_variance == pytest.approx(0.0)
+    assert res.judge_uncertain is False
+
+
+def test_lmstudio_n_samples_uses_non_zero_temperature_for_followups(monkeypatch, tmp_path):
+    """The first call uses the deterministic config.temperature; subsequent
+    calls must use the configured sample_temperature/top_p so the model
+    actually produces diverse opinions."""
+    img = tmp_path / "a.png"; _write_image(img)
+    seen_temps: list[float] = []
+
+    class _CapturingJudge(LMStudioJudge):
+        def _post(self, payload: dict) -> str:  # type: ignore[override]
+            seen_temps.append(payload["temperature"])
+            return _make_response(8.0, 7.0, 9.0).read().decode()
+
+    cfg = LMStudioJudgeConfig(
+        model="any", n_samples=3, temperature=0.0,
+        sample_temperature=0.4, sample_top_p=0.9,
+    )
+    judge = _CapturingJudge(cfg)
+    judge.judge_image(img, "a cat")
+    assert seen_temps[0] == pytest.approx(0.0)         # first call deterministic
+    assert seen_temps[1] == pytest.approx(0.4)         # follow-ups sampled
+    assert seen_temps[2] == pytest.approx(0.4)
+
+
 def test_lmstudio_payload_passes_enable_thinking_true_through():
     """Symmetric: explicit True must round-trip too, in case a user wants
     to force-enable thinking on a model whose template defaults to off."""

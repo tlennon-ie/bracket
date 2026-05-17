@@ -255,6 +255,27 @@ def _render(rows: list[dict]) -> str:
         for reason, count in reasons.most_common():
             lines.append(f"- `{reason}`: {count}")
 
+    # Self-consistency uncertainty: runs where the VLM disagreed with
+    # itself across n_samples > 1. Surfaced so the user can spot-check.
+    uncertain_rows = [r for r in training_rows if r.get("judge_uncertain")]
+    if uncertain_rows:
+        lines.append("")
+        lines.append("## Uncertain judgements")
+        lines.append("")
+        lines.append(
+            "The VLM disagreed with itself across `judge_n_samples` calls "
+            "on at least one image in these runs (score variance crossed the "
+            "configured threshold). Worth a manual look:"
+        )
+        lines.append("")
+        for r in uncertain_rows[:10]:
+            lines.append(
+                f"- `{r.get('run_id')}` "
+                f"({r.get('judge_report', {}).get('n_uncertain', '?')} "
+                f"uncertain / "
+                f"{r.get('judge_report', {}).get('n_images', '?')} images)"
+            )
+
     # Score distribution
     if scored_aggs:
         lines.append("")

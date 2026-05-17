@@ -124,6 +124,7 @@ def _record(
 ) -> LedgerEntry:
     score_value = None if score.score == float("inf") else score.score
     judge_payload = None
+    run_judge_uncertain = False
     if score.judge_report is not None:
         judgements_payload = []
         for j in score.judge_report.judgements:
@@ -135,10 +136,19 @@ def _record(
                 "artifact_free": j.artifact_free,
                 "overall": j.overall,
                 "error": j.error,
+                "score_variance": getattr(j, "score_variance", 0.0),
+                "judge_uncertain": bool(getattr(j, "judge_uncertain", False)),
                 # Truncate raw_response — full responses can be multi-KB and
                 # bloat the ledger. Keep enough context for debugging.
                 "raw_response": (j.raw_response[:600] if j.raw_response else ""),
             })
+        # Run-level uncertainty: True if any individual judgement crossed
+        # the variance threshold. Surfaced in the proof report so users
+        # can see which runs need a manual look.
+        run_judge_uncertain = any(
+            bool(getattr(j, "judge_uncertain", False))
+            for j in score.judge_report.judgements
+        )
         judge_payload = {
             "n_images": score.judge_report.n_images,
             "n_failed": score.judge_report.n_failed,
@@ -147,6 +157,10 @@ def _record(
             "mean_visual_quality": score.judge_report.mean_visual_quality,
             "mean_artifact_free": score.judge_report.mean_artifact_free,
             "judgements": judgements_payload,
+            "n_uncertain": sum(
+                1 for j in score.judge_report.judgements
+                if bool(getattr(j, "judge_uncertain", False))
+            ),
         }
     row = {
         "run_id": run_id,
@@ -166,6 +180,9 @@ def _record(
         "killed_by_timeout": result.killed_by_timeout,
         "error": result.error,
         "disqualified": score.disqualified,
+        # Surfaced in the proof report so users can spot configurations
+        # the VLM disagreed with itself on across the n_samples it took.
+        "judge_uncertain": run_judge_uncertain,
         "tfevents_path": str(result.tfevents_path) if result.tfevents_path else None,
         "log_path": str(result.log_path),
         "sample_dir": str(result.spec.sample_dir) if result.spec.sample_dir else None,
