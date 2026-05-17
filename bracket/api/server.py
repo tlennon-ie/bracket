@@ -350,6 +350,11 @@ def _start_session_impl(
         )
 
     sp = Path(req.sample_prompts).expanduser() if req.sample_prompts.strip() else None
+    sp_ood = (
+        Path(req.sample_prompts_ood).expanduser()
+        if (req.sample_prompts_ood or "").strip()
+        else None
+    )
     sample_every = int(req.max_steps) if sp is not None else None
 
     judge = None
@@ -388,7 +393,9 @@ def _start_session_impl(
             max_wall_seconds_per_run=int(req.wall_secs),
             seeds_per_config=int(req.seeds),
             n_curated=int(req.n_curated),
-            sample_prompts=sp, sample_every_n_steps=sample_every,
+            sample_prompts=sp,
+            sample_prompts_ood=sp_ood,
+            sample_every_n_steps=sample_every,
             sample_judge=judge,
             loss_weight=float(req.judge_loss_weight),
             sample_weight=float(req.judge_sample_weight),

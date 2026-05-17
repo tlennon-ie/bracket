@@ -183,6 +183,28 @@ function SetupPage() {
 								onChange={(e) => setField("sample_prompts", e.target.value)}
 							/>
 						</FieldRow>
+						<FieldRow
+							label="OOD sample prompts (optional)"
+							htmlFor="sample_prompts_ood"
+						>
+							<div className="flex flex-col gap-2">
+								<Input
+									id="sample_prompts_ood"
+									value={config.sample_prompts_ood ?? ""}
+									placeholder="./configs/sample_prompts_ood.txt"
+									onChange={(e) =>
+										setField(
+											"sample_prompts_ood",
+											e.target.value ? e.target.value : null,
+										)
+									}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Held-out prompts. When set, the scorer emits split
+									in-dist / OOD components and a generalisation gap.
+								</p>
+							</div>
+						</FieldRow>
 						<FieldRow label="Resume from (optional)" htmlFor="resume">
 							<Input
 								id="resume"
@@ -201,6 +223,7 @@ function SetupPage() {
 										"dataset_toml",
 										"output_dir",
 										"sample_prompts",
+										"sample_prompts_ood",
 										"resume",
 									].includes(f.name),
 							)}

@@ -67,6 +67,7 @@ def _execute_one(
     sample_prompts: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     judge_prompts: Optional[list[str]] = None,
+    n_in_dist_prompts: Optional[int] = None,
     # Promote-flow extensions (default to current search-run behaviour).
     save_every_n_steps: Optional[int] = None,
     save_state: bool = False,
@@ -90,6 +91,7 @@ def _execute_one(
         tfevents_path=result.tfevents_path,
         sample_dir=spec.sample_dir,
         prompts=judge_prompts,
+        n_in_dist_prompts=n_in_dist_prompts,
     )
     # Free the VLM's VRAM before the next training run starts. The judge's
     # eject() is a no-op when it has nothing to release; LMStudio's
@@ -192,6 +194,7 @@ def orchestrate(
     n_curated: Optional[int] = None,
     mirror_stdout: bool = False,
     sample_prompts: Optional[Path] = None,
+    sample_prompts_ood: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     sample_judge: Optional[SampleJudge] = None,
     loss_weight: float = 0.3,
@@ -242,7 +245,39 @@ def orchestrate(
     )
     space = trainer.declare_search_space()
     space = apply_search_overrides(space, search_overrides)
-    judge_prompts = parse_judge_prompts_file(sample_prompts) if sample_prompts else None
+
+    # When the user supplies a second (out-of-distribution) prompt file,
+    # we concatenate it onto the in-distribution prompts and hand the
+    # trainer a single merged file. Neither sd-scripts nor musubi-tuner
+    # natively supports two prompt sets, and concatenation avoids paying
+    # for a second sampling pass per checkpoint. The scorer is told the
+    # in-dist count so it can split the resulting judgements back apart.
+    n_in_dist_prompts: Optional[int] = None
+    effective_sample_prompts: Optional[Path] = sample_prompts
+    if sample_prompts is not None and sample_prompts_ood is not None:
+        in_dist_prompts = parse_judge_prompts_file(sample_prompts)
+        merged_path = output_dir / "merged_sample_prompts.txt"
+        in_dist_raw = Path(sample_prompts).read_text(encoding="utf-8")
+        ood_raw = Path(sample_prompts_ood).read_text(encoding="utf-8")
+        if not in_dist_raw.endswith("\n"):
+            in_dist_raw += "\n"
+        merged_path.write_text(
+            in_dist_raw + "# --- OOD prompts (held out) ---\n" + ood_raw,
+            encoding="utf-8",
+        )
+        effective_sample_prompts = merged_path
+        n_in_dist_prompts = len(in_dist_prompts)
+        logger.info(
+            "OOD prompts active: %d in-dist + %d OOD = %d total",
+            n_in_dist_prompts,
+            len(parse_judge_prompts_file(sample_prompts_ood)),
+            len(parse_judge_prompts_file(merged_path)),
+        )
+    judge_prompts = (
+        parse_judge_prompts_file(effective_sample_prompts)
+        if effective_sample_prompts
+        else None
+    )
 
     history: list[LedgerEntry] = list(ledger.to_history())
 
@@ -326,8 +361,8 @@ def orchestrate(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="baseline", cfg_id=cfg_id,
@@ -391,8 +426,8 @@ def orchestrate(
                 trainer=trainer, config=cur_config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="curated", cfg_id=cfg_id,
@@ -434,8 +469,8 @@ def orchestrate(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="candidate", cfg_id=cfg_id,

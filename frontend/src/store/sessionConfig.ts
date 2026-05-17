@@ -11,6 +11,7 @@ const DEFAULTS: StartSessionRequest = {
 	dataset_toml: "",
 	output_dir: "",
 	sample_prompts: "",
+	sample_prompts_ood: null,
 	resume: "",
 	images_per_dataset: 12,
 	vram_gb: null,

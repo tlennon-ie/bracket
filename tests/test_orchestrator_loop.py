@@ -204,6 +204,55 @@ def test_orchestrator_n_curated_caps_warmstart(tmp_path: Path):
     assert roles.count("candidate") == 2
 
 
+class _PromptRecordingTrainer(MockTrainer):
+    """Captures the sample_prompts path each prepare_run() call receives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_prompts: list[Optional[Path]] = []
+
+    def prepare_run(
+        self, *, sample_prompts: Optional[Path] = None, **kwargs,
+    ) -> LaunchSpec:  # type: ignore[override]
+        self.received_prompts.append(sample_prompts)
+        return super().prepare_run(sample_prompts=sample_prompts, **kwargs)
+
+
+def test_orchestrator_merges_ood_prompts_into_a_single_file(tmp_path: Path):
+    """When sample_prompts_ood is supplied, the orchestrator should
+    concatenate it onto sample_prompts and hand the trainer a single
+    merged file. The merged file lives in the session output_dir and
+    contains both prompt blocks separated by a comment marker."""
+    in_dist = tmp_path / "in.txt"
+    in_dist.write_text("easy 0\neasy 1\n", encoding="utf-8")
+    ood = tmp_path / "ood.txt"
+    ood.write_text("hard 0\nhard 1\n", encoding="utf-8")
+
+    trainer = _PromptRecordingTrainer()
+    out = tmp_path / "session"
+    orchestrate(
+        trainer=trainer,
+        dataset_toml=tmp_path / "ds.toml",
+        output_dir=out,
+        controller=RandomSearch(seed=1),
+        budget_runs=1,
+        max_steps_per_run=40,
+        max_wall_seconds_per_run=60,
+        sample_prompts=in_dist,
+        sample_prompts_ood=ood,
+        sample_every_n_steps=40,
+    )
+    # Every prepare_run() must have received the merged path, not the original.
+    assert trainer.received_prompts, "trainer never invoked"
+    merged = trainer.received_prompts[0]
+    assert merged is not None
+    assert merged != in_dist
+    merged_text = Path(merged).read_text(encoding="utf-8")
+    assert "easy 0" in merged_text
+    assert "hard 0" in merged_text
+    assert "OOD" in merged_text  # marker comment
+
+
 def test_orchestrator_resumable(tmp_path: Path):
     """Re-running orchestrate with the same output_dir should not re-run baseline.
     budget_runs is a *total* target — resumption continues toward it."""

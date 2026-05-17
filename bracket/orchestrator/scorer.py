@@ -95,8 +95,18 @@ class Scorer:
         tfevents_path: Optional[Path],
         sample_dir: Optional[Path] = None,
         prompts: Optional[list[str]] = None,
+        n_in_dist_prompts: Optional[int] = None,
     ) -> ScoreReport:
-        """Score a full run: loss component + sample component (if judge + samples)."""
+        """Score a full run: loss component + sample component (if judge + samples).
+
+        When ``n_in_dist_prompts`` is set, prompts at indices ``[0, n)`` are
+        treated as in-distribution and the rest (typically those concatenated
+        from ``sample_prompts_ood``) are treated as out-of-distribution. The
+        scorer then emits ``in_dist_score`` and ``ood_score`` components so
+        downstream consumers (Pareto front, generalisation-gap reports) can
+        reason about both axes. The aggregate ``score`` field is unchanged
+        for backward compat — it stays the mean across ALL judgements.
+        """
         report = self.score_tfevents(tfevents_path)
         if report.disqualified is not None:
             return report
@@ -151,6 +161,43 @@ class Scorer:
             "samples_judged": float(judge_report.n_images),
             "samples_failed": float(judge_report.n_failed),
         })
+        # Split in-dist vs OOD scores when the caller flagged a split. The
+        # split is by prompt string membership — the trainer's filename
+        # convention only encodes a prompt index, but by this point each
+        # judgement carries the actual prompt text it was paired with.
+        if (
+            n_in_dist_prompts is not None
+            and n_in_dist_prompts >= 0
+            and prompts
+            and n_in_dist_prompts < len(prompts)
+        ):
+            in_dist_prompts = set(prompts[:n_in_dist_prompts])
+            in_dist_scores = [
+                j.overall for j in judge_report.judgements
+                if j.error is None and j.prompt in in_dist_prompts
+            ]
+            ood_scores = [
+                j.overall for j in judge_report.judgements
+                if j.error is None and j.prompt not in in_dist_prompts
+            ]
+            # Mirror the aggregate's lower-is-better mapping so callers can
+            # compose these scores with the loss component without a sign flip.
+            if in_dist_scores:
+                in_mean = sum(in_dist_scores) / len(in_dist_scores)
+                new_components["in_dist_score"] = 1.0 - (in_mean / 10.0)
+                new_components["in_dist_overall_0_10"] = in_mean
+                new_components["in_dist_samples_judged"] = float(len(in_dist_scores))
+            if ood_scores:
+                ood_mean = sum(ood_scores) / len(ood_scores)
+                new_components["ood_score"] = 1.0 - (ood_mean / 10.0)
+                new_components["ood_overall_0_10"] = ood_mean
+                new_components["ood_samples_judged"] = float(len(ood_scores))
+            if in_dist_scores and ood_scores:
+                # Positive value = OOD performance worse than in-dist
+                # (lower-is-better space), i.e. the model failed to generalise.
+                new_components["generalization_gap"] = (
+                    new_components["ood_score"] - new_components["in_dist_score"]
+                )
         return ScoreReport(
             score=combined, components=new_components,
             n_steps=report.n_steps, disqualified=None, judge_report=judge_report,

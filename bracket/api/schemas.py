@@ -95,6 +95,14 @@ class StartSessionRequest(_Base):
     dataset_toml: str
     output_dir: str
     sample_prompts: str = ""
+    # Optional second prompt file. When set, prompts here are
+    # concatenated onto ``sample_prompts`` at run time and treated as
+    # out-of-distribution. The scorer then emits split
+    # ``in_dist_score`` / ``ood_score`` components plus a
+    # ``generalization_gap`` so consumers (Pareto front, report) can
+    # reason about both axes. Empty string = no OOD prompts, single-score
+    # behaviour preserved.
+    sample_prompts_ood: Optional[str] = None
     resume: str = ""
     # 0 (or any value <= 0) means "use the full dataset" — skip the
     # subset-building step entirely and point the trainer at the

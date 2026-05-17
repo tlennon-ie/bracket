@@ -148,6 +148,7 @@ export interface StartSessionRequest {
 	dataset_toml: string;
 	output_dir: string;
 	sample_prompts: string;
+	sample_prompts_ood?: string | null;
 	resume: string;
 	images_per_dataset: number;
 	vram_gb: number | null;
