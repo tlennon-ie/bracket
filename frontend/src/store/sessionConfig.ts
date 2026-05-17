@@ -11,6 +11,7 @@ const DEFAULTS: StartSessionRequest = {
 	dataset_toml: "",
 	output_dir: "",
 	sample_prompts: "",
+	sample_prompts_ood: null,
 	resume: "",
 	images_per_dataset: 12,
 	vram_gb: null,
@@ -30,11 +31,15 @@ const DEFAULTS: StartSessionRequest = {
 	judge_loss_weight: 0.3,
 	judge_sample_weight: 0.7,
 	judge_disable_thinking: false,
+	judge_n_samples: 1,
+	enable_clip_iqa_gate: false,
+	clip_iqa_dq_threshold: 0.3,
 	lr_min: null,
 	lr_max: null,
 	batch_size_min: null,
 	batch_size_max: null,
 	gradient_checkpointing_mode: null,
+	use_history_priors: false,
 	preset_field_values: {},
 };
 

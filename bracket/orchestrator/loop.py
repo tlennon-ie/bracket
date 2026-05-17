@@ -18,6 +18,10 @@ from typing import Optional
 
 from bracket.dataset.validator import validate_dataset_toml
 from bracket.judge.base import SampleJudge, parse_judge_prompts_file
+from bracket.orchestrator.history import (
+    lookup_warmstart_configs,
+    record_session_winner,
+)
 from bracket.orchestrator.ledger import Ledger
 from bracket.orchestrator.runner import RunLauncher, RunResult
 from bracket.orchestrator.scorer import Scorer, ScoreReport
@@ -67,6 +71,7 @@ def _execute_one(
     sample_prompts: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     judge_prompts: Optional[list[str]] = None,
+    n_in_dist_prompts: Optional[int] = None,
     # Promote-flow extensions (default to current search-run behaviour).
     save_every_n_steps: Optional[int] = None,
     save_state: bool = False,
@@ -90,6 +95,7 @@ def _execute_one(
         tfevents_path=result.tfevents_path,
         sample_dir=spec.sample_dir,
         prompts=judge_prompts,
+        n_in_dist_prompts=n_in_dist_prompts,
     )
     # Free the VLM's VRAM before the next training run starts. The judge's
     # eject() is a no-op when it has nothing to release; LMStudio's
@@ -118,6 +124,7 @@ def _record(
 ) -> LedgerEntry:
     score_value = None if score.score == float("inf") else score.score
     judge_payload = None
+    run_judge_uncertain = False
     if score.judge_report is not None:
         judgements_payload = []
         for j in score.judge_report.judgements:
@@ -129,10 +136,19 @@ def _record(
                 "artifact_free": j.artifact_free,
                 "overall": j.overall,
                 "error": j.error,
+                "score_variance": getattr(j, "score_variance", 0.0),
+                "judge_uncertain": bool(getattr(j, "judge_uncertain", False)),
                 # Truncate raw_response — full responses can be multi-KB and
                 # bloat the ledger. Keep enough context for debugging.
                 "raw_response": (j.raw_response[:600] if j.raw_response else ""),
             })
+        # Run-level uncertainty: True if any individual judgement crossed
+        # the variance threshold. Surfaced in the proof report so users
+        # can see which runs need a manual look.
+        run_judge_uncertain = any(
+            bool(getattr(j, "judge_uncertain", False))
+            for j in score.judge_report.judgements
+        )
         judge_payload = {
             "n_images": score.judge_report.n_images,
             "n_failed": score.judge_report.n_failed,
@@ -141,6 +157,10 @@ def _record(
             "mean_visual_quality": score.judge_report.mean_visual_quality,
             "mean_artifact_free": score.judge_report.mean_artifact_free,
             "judgements": judgements_payload,
+            "n_uncertain": sum(
+                1 for j in score.judge_report.judgements
+                if bool(getattr(j, "judge_uncertain", False))
+            ),
         }
     row = {
         "run_id": run_id,
@@ -160,6 +180,9 @@ def _record(
         "killed_by_timeout": result.killed_by_timeout,
         "error": result.error,
         "disqualified": score.disqualified,
+        # Surfaced in the proof report so users can spot configurations
+        # the VLM disagreed with itself on across the n_samples it took.
+        "judge_uncertain": run_judge_uncertain,
         "tfevents_path": str(result.tfevents_path) if result.tfevents_path else None,
         "log_path": str(result.log_path),
         "sample_dir": str(result.spec.sample_dir) if result.spec.sample_dir else None,
@@ -192,12 +215,17 @@ def orchestrate(
     n_curated: Optional[int] = None,
     mirror_stdout: bool = False,
     sample_prompts: Optional[Path] = None,
+    sample_prompts_ood: Optional[Path] = None,
     sample_every_n_steps: Optional[int] = None,
     sample_judge: Optional[SampleJudge] = None,
+    clip_iqa_judge: Optional[SampleJudge] = None,
+    clip_iqa_dq_threshold: float = 0.30,
     loss_weight: float = 0.3,
     sample_weight: float = 0.7,
     stop_event: Optional["__import__('threading').Event"] = None,
     search_overrides: Optional[SearchOverrides] = None,
+    use_history_priors: bool = False,
+    history_db_path: Optional[Path] = None,
 ) -> OrchestrationResult:
     """`n_curated` controls the warm-start: number of curated configs to try
     after the baseline and before the search controller takes over. None or
@@ -239,10 +267,44 @@ def orchestrate(
         sample_judge=sample_judge if sample_prompts is not None else None,
         loss_weight=loss_weight,
         sample_weight=sample_weight,
+        clip_iqa_judge=clip_iqa_judge if sample_prompts is not None else None,
+        clip_iqa_dq_threshold=clip_iqa_dq_threshold,
     )
     space = trainer.declare_search_space()
     space = apply_search_overrides(space, search_overrides)
-    judge_prompts = parse_judge_prompts_file(sample_prompts) if sample_prompts else None
+
+    # When the user supplies a second (out-of-distribution) prompt file,
+    # we concatenate it onto the in-distribution prompts and hand the
+    # trainer a single merged file. Neither sd-scripts nor musubi-tuner
+    # natively supports two prompt sets, and concatenation avoids paying
+    # for a second sampling pass per checkpoint. The scorer is told the
+    # in-dist count so it can split the resulting judgements back apart.
+    n_in_dist_prompts: Optional[int] = None
+    effective_sample_prompts: Optional[Path] = sample_prompts
+    if sample_prompts is not None and sample_prompts_ood is not None:
+        in_dist_prompts = parse_judge_prompts_file(sample_prompts)
+        merged_path = output_dir / "merged_sample_prompts.txt"
+        in_dist_raw = Path(sample_prompts).read_text(encoding="utf-8")
+        ood_raw = Path(sample_prompts_ood).read_text(encoding="utf-8")
+        if not in_dist_raw.endswith("\n"):
+            in_dist_raw += "\n"
+        merged_path.write_text(
+            in_dist_raw + "# --- OOD prompts (held out) ---\n" + ood_raw,
+            encoding="utf-8",
+        )
+        effective_sample_prompts = merged_path
+        n_in_dist_prompts = len(in_dist_prompts)
+        logger.info(
+            "OOD prompts active: %d in-dist + %d OOD = %d total",
+            n_in_dist_prompts,
+            len(parse_judge_prompts_file(sample_prompts_ood)),
+            len(parse_judge_prompts_file(merged_path)),
+        )
+    judge_prompts = (
+        parse_judge_prompts_file(effective_sample_prompts)
+        if effective_sample_prompts
+        else None
+    )
 
     history: list[LedgerEntry] = list(ledger.to_history())
 
@@ -326,8 +388,8 @@ def orchestrate(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="baseline", cfg_id=cfg_id,
@@ -353,9 +415,36 @@ def orchestrate(
     # before handing off to the search controller. Each curated config
     # consumes `seeds_per_config` slots of budget_runs (which is in
     # seed-runs, matching controller.should_stop).
+    curated_base = trainer.curated_configs()
+    if use_history_priors:
+        history_dicts = lookup_warmstart_configs(
+            trainer.name, space.name, n=3, db_path=history_db_path,
+        )
+        existing_ids = {config_id(c.to_dict()) for c in curated_base}
+        prepended: list[TrainerConfig] = []
+        for cfg_dict in history_dicts:
+            try:
+                cfg = trainer.config_from_dict(cfg_dict)
+            except Exception as e:  # noqa: BLE001 — old configs may have stale keys
+                logger.warning(
+                    "history: skipping warm-start config (incompatible with current trainer): %s",
+                    e,
+                )
+                continue
+            cid = config_id(cfg.to_dict())
+            if cid in existing_ids:
+                continue
+            existing_ids.add(cid)
+            prepended.append(cfg)
+        if prepended:
+            logger.info(
+                "history: prepending %d warm-start config(s) for %s/%s",
+                len(prepended), trainer.name, space.name,
+            )
+        curated_base = prepended + list(curated_base)
     curated = [
         clamp_config_to_overrides(c, search_overrides)
-        for c in trainer.curated_configs()
+        for c in curated_base
     ]
     if n_curated is None or n_curated < 0:
         n_curated_target = len(curated)
@@ -391,8 +480,8 @@ def orchestrate(
                 trainer=trainer, config=cur_config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="curated", cfg_id=cfg_id,
@@ -434,8 +523,8 @@ def orchestrate(
                 trainer=trainer, config=config, dataset_toml=dataset_toml,
                 max_steps=max_steps_per_run, seed=seed, run_dir=run_dir,
                 launcher=launcher, scorer=scorer, run_id=run_id,
-                sample_prompts=sample_prompts, sample_every_n_steps=sample_every_n_steps,
-                judge_prompts=judge_prompts,
+                sample_prompts=effective_sample_prompts, sample_every_n_steps=sample_every_n_steps,
+                judge_prompts=judge_prompts, n_in_dist_prompts=n_in_dist_prompts,
             )
             entry = _record(
                 ledger, run_id=run_id, role="candidate", cfg_id=cfg_id,
@@ -452,6 +541,29 @@ def orchestrate(
         candidate_idx += 1
 
     best = _pick_best_by_config(history)
+
+    # Persist the session winner so subsequent sessions targeting the
+    # same (trainer, search_space) pair can warm-start from it. We only
+    # record when there's actually a winner — disqualified-only sessions
+    # have nothing useful to remember.
+    if best is not None and best.score is not None:
+        # Multi-seed sessions report best by mean; capture the mean too.
+        same_cfg = [
+            h for h in history
+            if h.score is not None and _config_id_from_history(h) == _config_id_from_history(best)
+        ]
+        mean_best = (
+            sum(h.score for h in same_cfg) / len(same_cfg) if same_cfg else best.score
+        )
+        record_session_winner(
+            trainer_name=trainer.name,
+            search_space_name=space.name,
+            best_config=dict(best.config),
+            best_score=float(mean_best),
+            n_seeds=len(same_cfg) or 1,
+            db_path=history_db_path,
+        )
+
     return OrchestrationResult(
         session_dir=output_dir,
         ledger_path=ledger.path,

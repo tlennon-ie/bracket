@@ -130,6 +130,60 @@ def test_pair_samples_uses_sidecar_txt_when_present(tmp_path: Path):
     assert pairing[img] == "override prompt"
 
 
+def test_scorer_emits_in_dist_and_ood_components(tmp_path: Path):
+    """When the caller flags an in-dist / OOD split, the scorer must
+    emit `in_dist_score`, `ood_score`, and `generalization_gap` so the
+    Pareto front (Agent #2's work) and the report can read them. Aggregate
+    score is unchanged — still the mean across all judgements."""
+    tfe = _write_tfevents(tmp_path / "ev", [0.4 - 0.001 * i for i in range(50)])
+    sample_dir = tmp_path / "samples"; sample_dir.mkdir()
+    # Two in-dist prompts, two OOD prompts. The trainer wrote one sample
+    # per prompt index in the merged prompts file.
+    for idx in range(4):
+        _sample_at(sample_dir, f"candidate_000040_{idx}_42.png")
+
+    # Judge: easy prompts get 8/10, hard (OOD) prompts get 4/10.
+    class _SplitJudge(SampleJudge):
+        def judge_image(self, image_path: Path, prompt: str) -> SampleJudgement:
+            score = 8.0 if prompt.startswith("easy") else 4.0
+            return SampleJudgement(
+                image_path=image_path, prompt=prompt,
+                prompt_adherence=score, visual_quality=score,
+                artifact_free=score, overall=score,
+                raw_response="",
+            )
+
+    prompts = ["easy 0", "easy 1", "hard 0", "hard 1"]
+    scorer = Scorer(sample_judge=_SplitJudge(), loss_weight=0.3, sample_weight=0.7)
+    rep = scorer.score_run(
+        tfevents_path=tfe, sample_dir=sample_dir,
+        prompts=prompts, n_in_dist_prompts=2,
+    )
+
+    assert rep.disqualified is None
+    assert rep.judge_report is not None
+    # Lower-is-better mapping: 1 - mean/10
+    assert rep.components["in_dist_score"] == pytest.approx(1.0 - 8.0 / 10.0)
+    assert rep.components["ood_score"] == pytest.approx(1.0 - 4.0 / 10.0)
+    assert rep.components["generalization_gap"] == pytest.approx(0.4)
+    assert rep.components["in_dist_samples_judged"] == pytest.approx(2.0)
+    assert rep.components["ood_samples_judged"] == pytest.approx(2.0)
+
+
+def test_scorer_skips_ood_split_when_not_requested(tmp_path: Path):
+    """When n_in_dist_prompts is None, behave as before — no split keys."""
+    tfe = _write_tfevents(tmp_path / "ev", [0.4 - 0.001 * i for i in range(50)])
+    sample_dir = tmp_path / "samples"; sample_dir.mkdir()
+    _sample_at(sample_dir, "candidate_000040_0_42.png")
+    scorer = Scorer(sample_judge=_FixedJudge(score=8.0), loss_weight=0.3, sample_weight=0.7)
+    rep = scorer.score_run(
+        tfevents_path=tfe, sample_dir=sample_dir, prompts=["a beach"],
+    )
+    assert "in_dist_score" not in rep.components
+    assert "ood_score" not in rep.components
+    assert "generalization_gap" not in rep.components
+
+
 def test_disqualified_run_skips_judge(tmp_path: Path):
     """If loss says diverging, we shouldn't waste VLM budget on a doomed run."""
     tfe = _write_tfevents(tmp_path / "ev", [0.3 + 0.05 * i for i in range(40)])

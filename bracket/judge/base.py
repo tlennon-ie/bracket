@@ -27,6 +27,15 @@ class SampleJudgement:
     overall: float            # weighted combination — judge-defined
     raw_response: str = ""    # the model's raw JSON / text output, for debugging
     error: Optional[str] = None  # set if parsing/scoring failed; overall=0 in that case
+    # Self-consistency uncertainty: max std across the four scored axes
+    # when the judge was sampled N>1 times at a non-zero temperature.
+    # 0.0 means a single deterministic sample (the default) — same value
+    # the old field-less code would have implied.
+    score_variance: float = 0.0
+    # True when the per-image variance crossed the configured threshold;
+    # surfaced in the proof report so users can see which images the
+    # VLM disagreed with itself on.
+    judge_uncertain: bool = False
 
 
 @dataclass(frozen=True)

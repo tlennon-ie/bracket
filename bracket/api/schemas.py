@@ -95,6 +95,14 @@ class StartSessionRequest(_Base):
     dataset_toml: str
     output_dir: str
     sample_prompts: str = ""
+    # Optional second prompt file. When set, prompts here are
+    # concatenated onto ``sample_prompts`` at run time and treated as
+    # out-of-distribution. The scorer then emits split
+    # ``in_dist_score`` / ``ood_score`` components plus a
+    # ``generalization_gap`` so consumers (Pareto front, report) can
+    # reason about both axes. Empty string = no OOD prompts, single-score
+    # behaviour preserved.
+    sample_prompts_ood: Optional[str] = None
     resume: str = ""
     # 0 (or any value <= 0) means "use the full dataset" — skip the
     # subset-building step entirely and point the trainer at the
@@ -129,6 +137,22 @@ class StartSessionRequest(_Base):
     # equivalent (= leave default) is encoded as False here so the field
     # survives JSON round-trip cleanly.
     judge_disable_thinking: bool = False
+    # Number of VLM samples per image for self-consistency. >1 enables
+    # sampling at a non-zero temperature and reports the median + a
+    # per-image score variance (max std across the four scored axes).
+    # Default 1 = current deterministic behaviour.
+    judge_n_samples: int = 1
+
+    # CLIP-IQA disqualification gate. When True, the orchestrator also
+    # runs pyiqa's CLIP-IQA metric across every sampled image and
+    # disqualifies the run when the median falls below
+    # ``clip_iqa_dq_threshold`` (default 0.30, on pyiqa's native [0, 1]
+    # scale). CLIP-IQA is NOT used as a primary ranker — the VLM judge
+    # still drives selection; this just catches "melted" outputs the
+    # VLM hallucinated were fine. Default off — opt-in until the
+    # threshold has been tuned on real datasets.
+    enable_clip_iqa_gate: bool = False
+    clip_iqa_dq_threshold: float = 0.30
 
     # Search-range overrides. Any/all may be left null — the trainer's
     # default knob range (typically VRAM-tier aware) is used for any knob
@@ -142,6 +166,12 @@ class StartSessionRequest(_Base):
     # One of: "on" (force enabled), "off" (force disabled), "search"
     # (toggle in the search), or None (use trainer default).
     gradient_checkpointing_mode: Optional[str] = None
+
+    # When True, the orchestrator prepends up to 3 best configs from the
+    # SQLite history DB for the current (trainer, search_space) pair
+    # onto the curated warm-start list. Default off — opt-in until users
+    # have at least one prior session to draw from.
+    use_history_priors: bool = False
 
     # Preset-specific values, keyed by FieldSpec.name
     preset_field_values: dict[str, str] = Field(default_factory=dict)
@@ -191,6 +221,10 @@ class LossSeriesOut(_Base):
     steps: list[int] = Field(default_factory=list)
     raw: list[float] = Field(default_factory=list)
     smoothed: list[float] = Field(default_factory=list)
+    # Per-step gradient norm. Either empty (trainer doesn't emit a
+    # grad_norm scalar) or the same length as ``steps``, with ``None``
+    # entries for steps where no value was logged.
+    grad_norms: list[Optional[float]] = Field(default_factory=list)
 
 
 class MonitorSnapshotOut(_Base):

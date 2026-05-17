@@ -184,6 +184,7 @@ def _loss_series_to_out(ls: object) -> Optional[LossSeriesOut]:
         steps=list(getattr(ls, "steps", []) or []),
         raw=list(getattr(ls, "raw", []) or []),
         smoothed=list(getattr(ls, "smoothed", []) or []),
+        grad_norms=list(getattr(ls, "grad_norms", []) or []),
     )
 
 
@@ -349,6 +350,11 @@ def _start_session_impl(
         )
 
     sp = Path(req.sample_prompts).expanduser() if req.sample_prompts.strip() else None
+    sp_ood = (
+        Path(req.sample_prompts_ood).expanduser()
+        if (req.sample_prompts_ood or "").strip()
+        else None
+    )
     sample_every = int(req.max_steps) if sp is not None else None
 
     judge = None
@@ -360,6 +366,14 @@ def _start_session_impl(
         judge = LMStudioJudge(LMStudioJudgeConfig(
             base_url=req.judge_base_url, model=req.judge_model,
             enable_thinking=enable_thinking,
+            n_samples=max(1, int(getattr(req, "judge_n_samples", 1) or 1)),
+        ))
+
+    clip_iqa = None
+    if bool(getattr(req, "enable_clip_iqa_gate", False)) and sp is not None:
+        from bracket.judge.clip_iqa import ClipIqaJudge, ClipIqaJudgeConfig
+        clip_iqa = ClipIqaJudge(ClipIqaJudgeConfig(
+            dq_threshold=float(getattr(req, "clip_iqa_dq_threshold", 0.30) or 0.30),
         ))
 
     if req.search_method == "optuna":
@@ -387,12 +401,19 @@ def _start_session_impl(
             max_wall_seconds_per_run=int(req.wall_secs),
             seeds_per_config=int(req.seeds),
             n_curated=int(req.n_curated),
-            sample_prompts=sp, sample_every_n_steps=sample_every,
+            sample_prompts=sp,
+            sample_prompts_ood=sp_ood,
+            sample_every_n_steps=sample_every,
             sample_judge=judge,
+            clip_iqa_judge=clip_iqa,
+            clip_iqa_dq_threshold=float(
+                getattr(req, "clip_iqa_dq_threshold", 0.30) or 0.30
+            ),
             loss_weight=float(req.judge_loss_weight),
             sample_weight=float(req.judge_sample_weight),
             stop_event=session.stop_event,
             search_overrides=search_overrides,
+            use_history_priors=bool(getattr(req, "use_history_priors", False)),
         )
 
     finals_fn = None
@@ -687,7 +708,10 @@ def _make_router() -> APIRouter:
         ls = load_loss_series(tfe, ema_alpha=ema_alpha)
         if ls is None:
             return LossSeriesOut()
-        return LossSeriesOut(steps=list(ls.steps), raw=list(ls.raw), smoothed=list(ls.smoothed))
+        return LossSeriesOut(
+            steps=list(ls.steps), raw=list(ls.raw), smoothed=list(ls.smoothed),
+            grad_norms=list(getattr(ls, "grad_norms", []) or []),
+        )
 
     # ── training-config export / promote ──
 

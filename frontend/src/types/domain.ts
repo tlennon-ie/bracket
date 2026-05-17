@@ -61,6 +61,10 @@ export interface LossSeries {
 	steps: number[];
 	raw: number[];
 	smoothed: number[];
+	// Per-step gradient norm. Either empty (trainer doesn't log
+	// grad_norm) or the same length as `steps`, with `null` entries on
+	// steps where the trainer didn't emit a value.
+	grad_norms?: Array<number | null>;
 }
 
 export interface MonitorSnapshot {
@@ -144,6 +148,7 @@ export interface StartSessionRequest {
 	dataset_toml: string;
 	output_dir: string;
 	sample_prompts: string;
+	sample_prompts_ood?: string | null;
 	resume: string;
 	images_per_dataset: number;
 	vram_gb: number | null;
@@ -163,11 +168,15 @@ export interface StartSessionRequest {
 	judge_loss_weight: number;
 	judge_sample_weight: number;
 	judge_disable_thinking: boolean;
+	judge_n_samples?: number;
+	enable_clip_iqa_gate?: boolean;
+	clip_iqa_dq_threshold?: number;
 	lr_min: number | null;
 	lr_max: number | null;
 	batch_size_min: number | null;
 	batch_size_max: number | null;
 	gradient_checkpointing_mode: "on" | "off" | "search" | null;
+	use_history_priors?: boolean;
 	preset_field_values: Record<string, string>;
 }
 

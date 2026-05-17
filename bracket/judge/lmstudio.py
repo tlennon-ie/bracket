@@ -81,6 +81,18 @@ class LMStudioJudgeConfig:
     # VLMs). None = leave the kwarg unset and use whatever default the
     # template ships with.
     enable_thinking: Optional[bool] = None
+    # Self-consistency knobs. When n_samples > 1, the judge calls the
+    # VLM N times for the SAME image with a non-zero sampling
+    # temperature and reports the per-axis median plus a score_variance
+    # equal to the maximum per-axis std across the four scored fields.
+    # Default 1 keeps the existing (deterministic) behaviour.
+    n_samples: int = 1
+    sample_temperature: float = 0.4
+    sample_top_p: float = 0.9
+    # 1-10 scale threshold. When score_variance > this, the per-image
+    # judgement is flagged ``judge_uncertain=True`` and the row is
+    # surfaced in the report for review.
+    variance_threshold: float = 1.5
 
 
 class LMStudioJudge(SampleJudge):
@@ -108,12 +120,21 @@ class LMStudioJudge(SampleJudge):
         "additionalProperties": False,
     }
 
-    def _build_payload(self, image_data_url: str, prompt: str) -> dict:
+    def _build_payload(
+        self,
+        image_data_url: str,
+        prompt: str,
+        *,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+    ) -> dict:
         instruction = self.config.prompt_template.format(prompt=prompt)
         payload: dict = {
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature,
+            "temperature": (
+                temperature if temperature is not None else self.config.temperature
+            ),
             "messages": [
                 {
                     "role": "user",
@@ -135,6 +156,8 @@ class LMStudioJudge(SampleJudge):
                     "schema": self._JUDGE_JSON_SCHEMA,
                 },
             }
+        if top_p is not None:
+            payload["top_p"] = top_p
         if self.config.enable_thinking is not None:
             # LMStudio forwards `chat_template_kwargs` into the Jinja chat
             # template renderer. Qwen3-class templates check
@@ -299,28 +322,101 @@ class LMStudioJudge(SampleJudge):
             result.returncode, identifier, stderr or "<no output>",
         )
 
+    def _single_call(self, image_path: Path, prompt: str, *, sample_idx: int = 0) -> dict[str, float]:
+        """One LMStudio chat completion → normalised score dict.
+
+        Raises on any transport or parse failure so ``judge_image`` can
+        catch and convert to an errored SampleJudgement. When
+        ``sample_idx > 0`` and n_samples > 1, we use the configured
+        sampling temperature / top_p so the calls produce diverse
+        opinions (the basis for the self-consistency variance).
+        """
+        data_url = self._encode_image(image_path)
+        if sample_idx > 0 and self.config.n_samples > 1:
+            payload = self._build_payload(
+                data_url, prompt,
+                temperature=self.config.sample_temperature,
+                top_p=self.config.sample_top_p,
+            )
+        else:
+            payload = self._build_payload(data_url, prompt)
+        raw = self._post(payload)
+        text = self._extract_choice_text(raw)
+        parsed = self.parse_scores(text)
+        normed = self._normalise_to_10(parsed)
+        # Stash the raw response on the dict so judge_image can attach
+        # one example to the returned judgement for debugging.
+        normed["__raw__"] = text  # type: ignore[assignment]
+        return normed
+
+    @staticmethod
+    def _stdev(values: list[float]) -> float:
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        var = sum((v - mean) ** 2 for v in values) / len(values)
+        # math.sqrt accepts only non-negative; floating-point may still
+        # produce ~0 negatives — clip explicitly.
+        if var <= 0:
+            return 0.0
+        import math
+        return math.sqrt(var)
+
+    @staticmethod
+    def _median(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        s = sorted(values)
+        mid = len(s) // 2
+        if len(s) % 2 == 1:
+            return s[mid]
+        return (s[mid - 1] + s[mid]) / 2.0
+
     def judge_image(self, image_path: Path, prompt: str) -> SampleJudgement:
         image_path = Path(image_path)
-        try:
-            data_url = self._encode_image(image_path)
-            payload = self._build_payload(data_url, prompt)
-            raw = self._post(payload)
-            text = self._extract_choice_text(raw)
-            parsed = self.parse_scores(text)
-            normed = self._normalise_to_10(parsed)
-            pa = normed.get("prompt_adherence", 0.0)
-            vq = normed.get("visual_quality", 0.0)
-            af = normed.get("artifact_free", 0.0)
-            overall = (pa + vq + af) / 3.0
-            return SampleJudgement(
-                image_path=image_path, prompt=prompt,
-                prompt_adherence=pa, visual_quality=vq, artifact_free=af,
-                overall=overall, raw_response=text,
-            )
-        except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
-            logger.warning("LMStudio judge failed for %s: %s", image_path.name, e)
+        n_samples = max(1, int(self.config.n_samples))
+        results: list[dict[str, float]] = []
+        last_error: Optional[Exception] = None
+        for i in range(n_samples):
+            try:
+                results.append(self._single_call(image_path, prompt, sample_idx=i))
+            except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+                last_error = e
+                logger.warning(
+                    "LMStudio judge call %d/%d failed for %s: %s",
+                    i + 1, n_samples, image_path.name, e,
+                )
+        if not results:
+            err = last_error if last_error is not None else RuntimeError("no results")
             return SampleJudgement(
                 image_path=image_path, prompt=prompt,
                 prompt_adherence=0.0, visual_quality=0.0, artifact_free=0.0,
-                overall=0.0, raw_response="", error=f"{type(e).__name__}: {e}",
+                overall=0.0, raw_response="", error=f"{type(err).__name__}: {err}",
             )
+
+        # Aggregate per-axis median; variance is the max std across axes.
+        axes = ("prompt_adherence", "visual_quality", "artifact_free")
+        per_axis: dict[str, list[float]] = {a: [] for a in axes}
+        for r in results:
+            for a in axes:
+                per_axis[a].append(float(r.get(a, 0.0)))
+        medians = {a: self._median(per_axis[a]) for a in axes}
+        overall_per_call = [
+            (r.get("prompt_adherence", 0.0)
+             + r.get("visual_quality", 0.0)
+             + r.get("artifact_free", 0.0)) / 3.0
+            for r in results
+        ]
+        per_axis["overall"] = overall_per_call
+        max_std = max(self._stdev(per_axis[a]) for a in (*axes, "overall"))
+        overall_median = self._median(overall_per_call)
+        return SampleJudgement(
+            image_path=image_path, prompt=prompt,
+            prompt_adherence=medians["prompt_adherence"],
+            visual_quality=medians["visual_quality"],
+            artifact_free=medians["artifact_free"],
+            overall=overall_median,
+            raw_response=str(results[0].get("__raw__", "")),
+            score_variance=max_std,
+            judge_uncertain=max_std > self.config.variance_threshold,
+        )

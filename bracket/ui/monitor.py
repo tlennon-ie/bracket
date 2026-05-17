@@ -47,6 +47,10 @@ class LossSeries:
     # as `steps` when populated. Optional for backwards compatibility with
     # older callers that build the series by hand.
     wall_times: list[float] = field(default_factory=list)
+    # Per-step gradient norm. ``None`` entries indicate the trainer didn't
+    # emit a value for that step (most don't emit grad_norm at all today),
+    # while a populated list lets the Monitor draw the secondary axis line.
+    grad_norms: list[Optional[float]] = field(default_factory=list)
 
 
 @dataclass
@@ -126,18 +130,23 @@ def load_loss_series(tfevents: Path, *, ema_alpha: float = 0.05) -> Optional[Los
     raw: list[float] = []
     smoothed: list[float] = []
     wall_times: list[float] = []
+    grad_norms: list[Optional[float]] = []
 
     def _on_frame(frame) -> None:
         steps.append(frame.step)
         raw.append(frame.raw_loss)
         smoothed.append(frame.smoothed_loss)
         wall_times.append(frame.wall_time)
+        grad_norms.append(frame.grad_norm)
 
     tail = TFEventsTail(event_path=str(tfevents), on_frame=_on_frame, ema_alpha=ema_alpha)
     n = tail.drain_once()
     if n == 0:
         return None
-    return LossSeries(steps=steps, raw=raw, smoothed=smoothed, wall_times=wall_times)
+    return LossSeries(
+        steps=steps, raw=raw, smoothed=smoothed,
+        wall_times=wall_times, grad_norms=grad_norms,
+    )
 
 
 def compute_steps_per_sec(series: LossSeries, *, window: int = 10) -> Optional[float]:

@@ -56,6 +56,8 @@ class Scorer:
         sample_judge: Optional[SampleJudge] = None,
         loss_weight: float = 0.3,
         sample_weight: float = 0.7,
+        clip_iqa_judge: Optional[SampleJudge] = None,
+        clip_iqa_dq_threshold: float = 0.30,
     ) -> None:
         if loss_weight < 0 or sample_weight < 0:
             raise ValueError("weights must be >= 0")
@@ -67,6 +69,13 @@ class Scorer:
         self.sample_judge = sample_judge
         self.loss_weight = loss_weight
         self.sample_weight = sample_weight
+        # Optional secondary judge used as a DQ gate, NOT as a primary
+        # ranker. When set, the scorer judges every image in the sample
+        # dir via clip_iqa_judge and disqualifies the run if the median
+        # of the per-image scores falls below clip_iqa_dq_threshold.
+        # Threshold is in [0, 1] (clip-iqa's native scale).
+        self.clip_iqa_judge = clip_iqa_judge
+        self.clip_iqa_dq_threshold = clip_iqa_dq_threshold
 
     def score_tfevents(self, tfevents_path: Optional[Path]) -> ScoreReport:
         """Backwards-compatible loss-only scoring entry point used by tests."""
@@ -95,8 +104,18 @@ class Scorer:
         tfevents_path: Optional[Path],
         sample_dir: Optional[Path] = None,
         prompts: Optional[list[str]] = None,
+        n_in_dist_prompts: Optional[int] = None,
     ) -> ScoreReport:
-        """Score a full run: loss component + sample component (if judge + samples)."""
+        """Score a full run: loss component + sample component (if judge + samples).
+
+        When ``n_in_dist_prompts`` is set, prompts at indices ``[0, n)`` are
+        treated as in-distribution and the rest (typically those concatenated
+        from ``sample_prompts_ood``) are treated as out-of-distribution. The
+        scorer then emits ``in_dist_score`` and ``ood_score`` components so
+        downstream consumers (Pareto front, generalisation-gap reports) can
+        reason about both axes. The aggregate ``score`` field is unchanged
+        for backward compat — it stays the mean across ALL judgements.
+        """
         report = self.score_tfevents(tfevents_path)
         if report.disqualified is not None:
             return report
@@ -151,10 +170,91 @@ class Scorer:
             "samples_judged": float(judge_report.n_images),
             "samples_failed": float(judge_report.n_failed),
         })
+        # Split in-dist vs OOD scores when the caller flagged a split. The
+        # split is by prompt string membership — the trainer's filename
+        # convention only encodes a prompt index, but by this point each
+        # judgement carries the actual prompt text it was paired with.
+        if (
+            n_in_dist_prompts is not None
+            and n_in_dist_prompts >= 0
+            and prompts
+            and n_in_dist_prompts < len(prompts)
+        ):
+            in_dist_prompts = set(prompts[:n_in_dist_prompts])
+            in_dist_scores = [
+                j.overall for j in judge_report.judgements
+                if j.error is None and j.prompt in in_dist_prompts
+            ]
+            ood_scores = [
+                j.overall for j in judge_report.judgements
+                if j.error is None and j.prompt not in in_dist_prompts
+            ]
+            # Mirror the aggregate's lower-is-better mapping so callers can
+            # compose these scores with the loss component without a sign flip.
+            if in_dist_scores:
+                in_mean = sum(in_dist_scores) / len(in_dist_scores)
+                new_components["in_dist_score"] = 1.0 - (in_mean / 10.0)
+                new_components["in_dist_overall_0_10"] = in_mean
+                new_components["in_dist_samples_judged"] = float(len(in_dist_scores))
+            if ood_scores:
+                ood_mean = sum(ood_scores) / len(ood_scores)
+                new_components["ood_score"] = 1.0 - (ood_mean / 10.0)
+                new_components["ood_overall_0_10"] = ood_mean
+                new_components["ood_samples_judged"] = float(len(ood_scores))
+            if in_dist_scores and ood_scores:
+                # Positive value = OOD performance worse than in-dist
+                # (lower-is-better space), i.e. the model failed to generalise.
+                new_components["generalization_gap"] = (
+                    new_components["ood_score"] - new_components["in_dist_score"]
+                )
+        # CLIP-IQA gate. Runs alongside the VLM judge as an additional
+        # check; emits a clip_iqa_median component and DQs if the
+        # median falls below the configured threshold. The VLM's score
+        # is the primary ranker — clip-iqa just catches "melted"
+        # outputs the VLM happily called fine.
+        if self.clip_iqa_judge is not None and prompt_for_image:
+            disqualified, clip_components = self._run_clip_iqa_gate(prompt_for_image)
+            new_components.update(clip_components)
+            if disqualified is not None:
+                return ScoreReport(
+                    score=math.inf, components=new_components,
+                    n_steps=report.n_steps, disqualified=disqualified,
+                    judge_report=judge_report,
+                )
         return ScoreReport(
             score=combined, components=new_components,
             n_steps=report.n_steps, disqualified=None, judge_report=judge_report,
         )
+
+    def _run_clip_iqa_gate(
+        self, prompt_for_image: dict[Path, str],
+    ) -> tuple[Optional[str], dict[str, float]]:
+        """Run the configured CLIP-IQA judge across the run's samples
+        and return (``disqualified`` reason, components dict)."""
+        if self.clip_iqa_judge is None:
+            return None, {}
+        scores_01: list[float] = []
+        for img, prompt in prompt_for_image.items():
+            j = self.clip_iqa_judge.judge_image(img, prompt)
+            if j.error is not None:
+                continue
+            # ClipIqaJudge encodes the raw [0,1] value as overall * 10.
+            scores_01.append(max(0.0, min(1.0, j.overall / 10.0)))
+        # Free the model's VRAM ahead of the next training run.
+        try:
+            self.clip_iqa_judge.eject()
+        except Exception:  # noqa: BLE001 — eject must never block the loop
+            pass
+        if not scores_01:
+            return None, {"clip_iqa_unavailable": 1.0}
+        median = _percentile(scores_01, 50.0)
+        components = {
+            "clip_iqa_median": float(median),
+            "clip_iqa_samples_judged": float(len(scores_01)),
+        }
+        if median < float(self.clip_iqa_dq_threshold):
+            return "low_clip_iqa", components
+        return None, components
 
     def _score_frames(self, frames: list[LossFrame]) -> ScoreReport:
         n = len(frames)
@@ -169,7 +269,7 @@ class Scorer:
         window = max(2, int(round(self.slope_window_fraction * n)))
         tail = frames[-window:]
         slope = _least_squares_slope([f.step for f in tail], [f.smoothed_loss for f in tail])
-        components = {
+        components: dict[str, float] = {
             "final_smoothed": last.smoothed_loss,
             "final_raw": last.raw_loss,
             "slope": slope,
@@ -177,6 +277,41 @@ class Scorer:
             "first_smoothed": frames[0].smoothed_loss,
             "n_frames": float(n),
         }
+
+        # Gradient-norm stability — only emitted by trainers that route a
+        # ``mean_grad_norm`` value through ``generate_step_logs``. When
+        # nothing is logged we skip the components entirely; absence of a
+        # signal is not a divergence signal.
+        grad_values = [f.grad_norm for f in frames if f.grad_norm is not None]
+        if grad_values:
+            # Explosion check: any non-finite value or a 99th-percentile that
+            # blew past the hard cap means optimisation has gone unstable —
+            # the rest of the loss curve is unreliable noise.
+            if any(not math.isfinite(g) for g in grad_values):
+                gn_p99 = math.inf
+            else:
+                gn_p99 = _percentile(grad_values, 99.0)
+            components["grad_norm_p99"] = gn_p99
+
+            window_size = max(2, int(round(self.slope_window_fraction * n)))
+            tail_grads = [
+                f.grad_norm for f in frames[-window_size:] if f.grad_norm is not None
+            ]
+            if len(tail_grads) >= 2:
+                mean_tail = sum(tail_grads) / len(tail_grads)
+                variance = sum((g - mean_tail) ** 2 for g in tail_grads) / len(tail_grads)
+                std_tail = math.sqrt(variance)
+                if mean_tail > 0 and math.isfinite(mean_tail) and math.isfinite(std_tail):
+                    components["grad_norm_oscillation"] = std_tail / mean_tail
+                else:
+                    components["grad_norm_oscillation"] = math.inf if not math.isfinite(std_tail) else 0.0
+
+            if not math.isfinite(gn_p99) or gn_p99 > 100.0:
+                return ScoreReport(
+                    score=math.inf, components=components, n_steps=n,
+                    disqualified="gradient_explosion",
+                )
+
         if slope > self.positive_slope_kill_threshold:
             return ScoreReport(
                 score=math.inf, components=components, n_steps=n,
@@ -242,6 +377,25 @@ def _extract_prompt_idx(stem: str) -> Optional[int]:
     if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
         return int(parts[-2])
     return None
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile (matches numpy default). ``values``
+    is sorted internally; caller does not need to pre-sort."""
+    if not values:
+        return float("nan")
+    if pct <= 0:
+        return min(values)
+    if pct >= 100:
+        return max(values)
+    sorted_vals = sorted(values)
+    k = (pct / 100.0) * (len(sorted_vals) - 1)
+    lo = int(math.floor(k))
+    hi = int(math.ceil(k))
+    if lo == hi:
+        return sorted_vals[lo]
+    frac = k - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
 
 
 def _least_squares_slope(xs, ys) -> float:
