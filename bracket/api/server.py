@@ -391,8 +391,15 @@ def _start_session_impl(
             enable_thinking=enable_thinking,
         ))
 
-    if req.search_method == "optuna":
-        controller: SearchController = OptunaTPESearch(
+    # Two objectives request NSGA-II. Single objective uses TPE (default)
+    # or Random. ``objectives`` was validated above so we trust its shape.
+    if len(objectives) == 2:
+        from bracket.search.optuna_multi import OptunaNSGAIISearch
+        controller: SearchController = OptunaNSGAIISearch(
+            seed=0, objectives=tuple(objectives),
+        )
+    elif req.search_method == "optuna":
+        controller = OptunaTPESearch(
             seed=0, n_startup_trials=int(req.optuna_startup),
         )
     else:
