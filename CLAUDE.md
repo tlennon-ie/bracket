@@ -31,16 +31,20 @@ you never depend on any specific developer's machine.
 |---|---|
 | Trainer adapters (one per model+mode) | [`bracket/trainer/`](./bracket/trainer/) |
 | Hyperparameter search controllers | [`bracket/search/`](./bracket/search/) |
+| Search-space overrides (`apply_search_overrides`, `clamp_config_to_overrides`) | [`bracket/search/space.py`](./bracket/search/space.py) |
 | Run launcher (subprocess + tfevents) | [`bracket/orchestrator/runner.py`](./bracket/orchestrator/runner.py) |
 | Scoring (loss + VLM) | [`bracket/orchestrator/scorer.py`](./bracket/orchestrator/scorer.py) |
 | Orchestration loop (baseline → curated → search → finals) | [`bracket/orchestrator/loop.py`](./bracket/orchestrator/loop.py) |
+| Dataset preflight validation + CLI | [`bracket/dataset/validator.py`](./bracket/dataset/validator.py), [`bracket/dataset/validator_cli.py`](./bracket/dataset/validator_cli.py) (run as `python -m bracket.dataset.validator <toml>`) |
+| Latent-cache detection (drives sd-scripts `--skip_cache_check`) | [`bracket/dataset/latent_cache.py`](./bracket/dataset/latent_cache.py) |
 | VLM judge protocol + LMStudio impl | [`bracket/judge/`](./bracket/judge/) |
-| Markdown report | [`bracket/proof/report.py`](./bracket/proof/report.py) |
+| Markdown report (auto-regens on stale ledger) | [`bracket/proof/report.py`](./bracket/proof/report.py) |
 | Model + training-type registry (UI dropdowns) | [`bracket/registry.py`](./bracket/registry.py) |
 | FastAPI server (HTTP + WebSocket + static frontend) | [`bracket/api/`](./bracket/api/) |
 | React frontend (Vite + shadcn/ui) | [`frontend/`](./frontend/) |
+| Results-page loss-curve overlay | [`frontend/src/components/results/RunComparisonChart.tsx`](./frontend/src/components/results/RunComparisonChart.tsx) |
 | Legacy Gradio UI (deprecated, removed in v0.2) | [`bracket/ui/`](./bracket/ui/) |
-| Tests | [`tests/`](./tests/) |
+| Tests | [`tests/`](./tests/) — orchestrator unit tests stub `validate_dataset_toml` via [`tests/conftest.py`](./tests/conftest.py) |
 
 Every concern has exactly one canonical module. Adding a new trainer is
 ~150 lines: implement the [`Trainer`](./bracket/trainer/base.py) protocol

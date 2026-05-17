@@ -25,9 +25,10 @@ bracket is a single-machine hyperparameter-search and ranking tool for diffusion
 It drives the trainers you already use through real `accelerate launch` subprocesses. It does not re-implement training.
 
 - Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA).
-- Search: Optuna TPE with curated warm-start, or Random.
+- Search: Optuna TPE with curated warm-start, or Random. User-set `lr_min/max` and `batch_size_min/max` bounds clamp every run in the session — baseline and curated configs included, not just sampled trials.
 - Judge: local LMStudio + Qwen3-VL by default. Hot-swappable.
 - Stats: Welch's t-test on best vs runner-up. Honest about single-seed results.
+- Pre-flight: dataset validation (caption coverage, empty captions, missing image dirs) catches the obvious-but-easy-to-miss problems before a single GPU second is spent. Existing latent caches are detected and re-used via sd-scripts' `--skip_cache_check`.
 
 No cloud. No paid tier. No telemetry.
 
@@ -97,7 +98,7 @@ Five stages: baseline, curated warm-start, TPE search, finals re-rank, report. E
 | ![Setup](./assets/screenshots/setup.png) | **Setup** — cascading model picker, dataset TOML drop with bucket preview, judge config. |
 | ![Run](./assets/screenshots/run.png) | **Run** — budget the search, tune finals, see a wall-time estimate before you start. |
 | ![Monitor](./assets/screenshots/monitor.png) | **Monitor** — live loss chart smoothed client-side (drag the slider; no roundtrip), score history, gallery. |
-| ![Results](./assets/screenshots/results.png) | **Results** — markdown report with the verdict, ledger table, comparison mode for sample images. |
+| ![Results](./assets/screenshots/results.png) | **Results** — markdown report with the verdict, ledger table, comparison mode for sample images, and a per-run loss-curve overlay that opens when you check rows in the ledger (1-3 runs, colour-coded, client-side smoothed). |
 
 Tab transitions are 200ms. The Monitor's loss chart updates over WebSocket — no five-second poll lag. The smoothing slider recomputes EMA in JS from a raw buffer. Keyboard shortcuts: `r` refresh · `Esc` stop · `[` `]` cycle smoothing · `g s/r/m/o` chord nav.
 

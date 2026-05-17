@@ -18,8 +18,11 @@ distributed-multi-node, no SaaS, no paid tiers.
 
 - [ ] **Per-step VLM scoring** — sample at intermediate checkpoints, not just at session end. Catches divergence at step 200 instead of step 500.
 - [ ] **True ASHA** (multi-rung promotion, async) — kill bad runs early instead of waiting them out.
-- [ ] **Run comparison view in Results** — side-by-side gallery for any 2-3 candidates at the same prompt index.
-- [ ] **Frontend deep-link state** — every selection (compared runs, smoothing, theme) reflected in URL.
+- [x] **Run comparison view in Results** — side-by-side sample gallery for 2-3 candidates plus a loss-curve overlay (`RunComparisonChart`) with per-run colour and client-side smoothing.
+- [x] **Frontend deep-link state** — every selection (compared runs, smoothing, theme) reflected in URL.
+- [x] **Dataset preflight validation** — `bracket.dataset.validator` catches missing/empty captions and absent image dirs before any GPU second is spent. CLI offers `--fix` and `--remove-bad`.
+- [x] **Skip latent re-cache check** — `bracket.dataset.latent_cache` detects existing `.npz` neighbours; sd-scripts trainers add `--skip_cache_check` so re-runs on a hot dataset skip the per-image integrity walk.
+- [x] **Search bounds enforced everywhere** — `clamp_config_to_overrides` clamps the trainer-published baseline and curated configs to the user's `lr_min/max` and `batch_size_min/max` so no run in a session escapes the declared window.
 
 ## v0.3 — more diffusion models
 
