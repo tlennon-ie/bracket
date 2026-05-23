@@ -14,7 +14,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from bracket.dataset.validator import validate_dataset_toml
 from bracket.frame import LossFrame
@@ -317,6 +317,11 @@ def orchestrate(
     # trainer supports it). Default OFF — it changes the run set.
     enable_divergence_killer: bool = True,
     enable_two_rung_asha: bool = False,
+    # Optional callback invoked with each RunLauncher instance the moment it
+    # is constructed. The UI uses this to register the launcher on the
+    # session so a Stop click can kill the live subprocess immediately
+    # instead of waiting for the next 1-second stop_event poll tick.
+    on_launcher_ready: Optional[Callable[[RunLauncher], None]] = None,
 ) -> OrchestrationResult:
     """`n_curated` controls the warm-start: number of curated configs to try
     after the baseline and before the search controller takes over. None or
@@ -348,6 +353,7 @@ def orchestrate(
             stop_event=stop_event,
             search_overrides=search_overrides,
             enable_divergence_killer=enable_divergence_killer,
+            on_launcher_ready=on_launcher_ready,
         )
     output_dir = Path(output_dir).resolve()
 
@@ -380,6 +386,11 @@ def orchestrate(
         mirror_stdout=mirror_stdout,
         stop_event=stop_event,
     )
+    if on_launcher_ready is not None:
+        try:
+            on_launcher_ready(launcher)
+        except Exception:  # noqa: BLE001 — UI registration must never abort orchestration
+            logger.exception("on_launcher_ready callback raised")
     scorer = Scorer(
         sample_judge=sample_judge if sample_prompts is not None else None,
         loss_weight=loss_weight,

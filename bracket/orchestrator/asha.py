@@ -18,7 +18,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from bracket.judge.base import SampleJudge
 from bracket.orchestrator.ledger import Ledger
@@ -152,6 +152,7 @@ def orchestrate_two_rung(
     stop_event=None,
     search_overrides: Optional[SearchOverrides] = None,
     enable_divergence_killer: bool = True,
+    on_launcher_ready: Optional[Callable[[object], None]] = None,
 ) -> OrchestrationResult:
     """Run :func:`orchestrate` twice — rung 1 at 25% budget, rung 2 promoting
     the top half. The merged ledger lives at ``output_dir/ledger.jsonl``."""
@@ -193,6 +194,7 @@ def orchestrate_two_rung(
         search_overrides=search_overrides,
         enable_divergence_killer=enable_divergence_killer,
         enable_two_rung_asha=False,  # never recursive
+        on_launcher_ready=on_launcher_ready,
     )
 
     # Decide who gets promoted.
@@ -254,6 +256,7 @@ def orchestrate_two_rung(
         loss_weight=loss_weight,
         sample_weight=sample_weight,
         stop_event=stop_event,
+        on_launcher_ready=on_launcher_ready,
     )
     # Copy rung-2 ledger rows into the merged session ledger.
     rung2_ledger = rung2_dir / "ledger.jsonl"
@@ -301,6 +304,7 @@ def _run_rung2_pass(
     loss_weight: float,
     sample_weight: float,
     stop_event,
+    on_launcher_ready: Optional[Callable[[object], None]] = None,
 ) -> None:
     """Run each promoted config at full budget. Resume from rung-1 state is
     not currently threaded through to the trainer — the gate falls back to
@@ -318,6 +322,11 @@ def _run_rung2_pass(
         mirror_stdout=mirror_stdout,
         stop_event=stop_event,
     )
+    if on_launcher_ready is not None:
+        try:
+            on_launcher_ready(launcher)
+        except Exception:  # noqa: BLE001
+            logger.exception("on_launcher_ready callback raised")
     scorer = Scorer(
         sample_judge=sample_judge if sample_prompts is not None else None,
         loss_weight=loss_weight,

@@ -15,7 +15,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from bracket.judge.base import PairwiseJudge, SampleJudge, parse_judge_prompts_file
 from bracket.orchestrator.ledger import Ledger
@@ -87,6 +87,7 @@ def run_finals_stage(
     sample_weight: float = 0.7,
     mirror_stdout: bool = False,
     pairwise_judge: Optional[PairwiseJudge] = None,
+    on_launcher_ready: Optional[Callable[[RunLauncher], None]] = None,
 ) -> FinalsResult:
     """Run the top-K stage-1 candidates at a higher step budget; append rows
     to the same ledger so the proof report covers both stages."""
@@ -97,6 +98,11 @@ def run_finals_stage(
     launcher = RunLauncher(
         max_wall_seconds=finals_max_wall_seconds, mirror_stdout=mirror_stdout,
     )
+    if on_launcher_ready is not None:
+        try:
+            on_launcher_ready(launcher)
+        except Exception:  # noqa: BLE001
+            logger.exception("on_launcher_ready callback raised")
     scorer = Scorer(
         sample_judge=sample_judge if sample_prompts is not None else None,
         loss_weight=loss_weight, sample_weight=sample_weight,

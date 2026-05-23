@@ -384,7 +384,15 @@ def _start_session_impl(
         if (req.sample_prompts_ood or "").strip()
         else None
     )
-    sample_every = int(req.max_steps) if sp is not None else None
+    # Sample at roughly the half-way point of the run (and again at the end)
+    # rather than only on the final step. Reason: candidates pruned early by
+    # the DivergenceKiller, wall-time, or user-stop never reach the final
+    # step, so the old `sample_every = max_steps` produced zero sample
+    # images for any pruned/short run. Cap at every 50 steps minimum so
+    # very-long budgets don't spend all their wall-time sampling.
+    sample_every = (
+        max(50, int(req.max_steps) // 2) if sp is not None else None
+    )
 
     # `judge_disable_thinking=True` translates to enable_thinking=False
     # in the chat_template_kwargs sent to LMStudio. Leave None when the
@@ -430,6 +438,12 @@ def _start_session_impl(
         gradient_checkpointing_mode=req.gradient_checkpointing_mode,
     )
 
+    # Registered on the session as each RunLauncher is constructed so a
+    # `/session/stop` POST can kill the live subprocess immediately rather
+    # than waiting for the next 1-second stop_event poll tick.
+    def _register_launcher(launcher: object) -> None:
+        session._active_launcher = launcher
+
     def run_fn() -> OrchestrationResult:
         return orchestrate(
             trainer=trainer, dataset_toml=subset_toml, output_dir=out,
@@ -453,6 +467,7 @@ def _start_session_impl(
             use_history_priors=bool(getattr(req, "use_history_priors", False)),
             enable_divergence_killer=bool(req.enable_divergence_killer),
             enable_two_rung_asha=bool(req.enable_two_rung_asha),
+            on_launcher_ready=_register_launcher,
         )
 
     # Pairwise judge for the BT tournament. Reuses the LMStudio config
@@ -483,6 +498,7 @@ def _start_session_impl(
                 loss_weight=float(req.judge_loss_weight),
                 sample_weight=float(req.judge_sample_weight),
                 pairwise_judge=pairwise_judge,
+                on_launcher_ready=_register_launcher,
             )
 
     total_target = (1 + int(req.budget)) * int(req.seeds)

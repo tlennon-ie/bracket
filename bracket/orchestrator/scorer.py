@@ -15,11 +15,14 @@ Disqualifications return score=+inf and `disqualified` set:
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+
+logger = logging.getLogger("bracket.scorer")
 
 from bracket.ema import EMASmoother
 from bracket.frame import LossFrame
@@ -146,7 +149,16 @@ class Scorer:
 
         prompt_for_image = _pair_samples_with_prompts(sample_dir, prompts)
         if not prompt_for_image:
-            # Trainer wrote no samples — fall back to loss-only.
+            # Trainer wrote no samples — fall back to loss-only. Surface the
+            # condition: silent fallback historically hid pruned-before-first-
+            # sample runs and sample_every_n_steps misconfigurations.
+            logger.warning(
+                "scorer: no sample images found in %s — falling back to "
+                "loss-only score. Likely causes: run killed before the first "
+                "sample step, sample_every_n_steps too high for max_steps, "
+                "or trainer wrote samples to an unexpected location.",
+                sample_dir,
+            )
             report.components["loss_only"] = 1.0
             report.components["sample_dir_empty"] = 1.0
             return report

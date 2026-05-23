@@ -222,13 +222,43 @@ class RunLauncher:
     def _kill(proc: subprocess.Popen) -> None:
         try:
             if os.name == "nt":
-                # Sending SIGBREAK to the group reaches accelerate workers too.
+                # On Windows, the trainer process spawns torch DataLoader
+                # workers and `accelerate` worker processes that do NOT share
+                # a Win32 job object with the parent — `proc.kill()` only
+                # terminates the top-level Python, leaving GPU-owning
+                # workers running for many more steps until they fail their
+                # next IPC rendezvous with the dead parent. That's the
+                # "stop takes ages and keeps training" symptom.
+                #
+                # Strategy: soft-signal the process group with
+                # CTRL_BREAK_EVENT first (gives Python a chance to flush),
+                # then hard-kill the entire process tree via taskkill /T.
                 import signal
-                proc.send_signal(signal.CTRL_BREAK_EVENT)
-                # Fallback hard kill if it doesn't oblige
-                time.sleep(2.0)
+                try:
+                    proc.send_signal(signal.CTRL_BREAK_EVENT)
+                except Exception:  # noqa: BLE001
+                    # Process may have exited between poll() and the signal.
+                    pass
+                # Short grace period to let CTRL_BREAK propagate, then
+                # force-kill the whole tree.
+                time.sleep(1.0)
                 if proc.poll() is None:
-                    proc.kill()
+                    # /T = tree, /F = force. Don't raise on non-zero exit:
+                    # taskkill returns 128 when the PID already exited.
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        check=False,
+                    )
+                    # Belt-and-braces: if taskkill couldn't find children
+                    # (e.g. detached), still try the standard kill.
+                    if proc.poll() is None:
+                        try:
+                            proc.kill()
+                        except Exception:  # noqa: BLE001
+                            pass
             else:
                 import signal
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
