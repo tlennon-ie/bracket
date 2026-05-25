@@ -465,7 +465,7 @@ function SetupPage() {
 									step={0.05}
 									value={[config.judge_loss_weight]}
 									onValueChange={(v) => {
-										const lw = v[0] ?? 0.3;
+										const lw = v[0] ?? 0.7;
 										setField("judge_loss_weight", lw);
 										setField(
 											"judge_sample_weight",
@@ -488,7 +488,7 @@ function SetupPage() {
 									step={0.05}
 									value={[config.judge_sample_weight]}
 									onValueChange={(v) => {
-										const sw = v[0] ?? 0.7;
+										const sw = v[0] ?? 0.3;
 										setField("judge_sample_weight", sw);
 										setField("judge_loss_weight", Number((1 - sw).toFixed(2)));
 									}}

@@ -108,29 +108,46 @@ class StartSessionRequest(_Base):
     # subset-building step entirely and point the trainer at the
     # user-supplied dataset_toml as-is. Anything > 0 caps each class
     # subdirectory to that many randomly-sampled images.
-    images_per_dataset: int = 12
+    #
+    # Default is 0 (full dataset). A tiny subset (e.g. 12 images) at a
+    # short max_steps lets high-LR / low-warmup configs memorize the
+    # subset by the proxy end, which then loses at full FT. Honest-scoring
+    # default is the real dataset. Users can opt into a cheap quick-scan
+    # by setting this to a small number explicitly.
+    images_per_dataset: int = 0
     vram_gb: Optional[float] = None
 
-    # Search budget
+    # Search budget.
+    #
+    # The proxy budget has to be long enough that configs *generalize*
+    # rather than memorize — see audit PR1. 1500 steps + 2 seeds gives the
+    # search and judge enough signal to differentiate winners from
+    # noise-equivalent runners-up.
     budget: int = 8
-    max_steps: int = 300
+    max_steps: int = 1500
     wall_secs: int = 1800
-    seeds: int = 1
+    seeds: int = 2
     search_method: str = "optuna"
     optuna_startup: int = 5
     n_curated: int = -1
 
-    # Finals
-    finals_top_k: int = 0
-    finals_max_steps: int = 2000
+    # Finals. Top-K from the proxy stage are re-run at a longer budget so
+    # the final ranking isn't a 300-step coin flip. K=3 + 3000 steps is a
+    # tight enough sample to catch a proxy winner that diverges at length.
+    finals_top_k: int = 3
+    finals_max_steps: int = 3000
     finals_seeds: int = 2
 
-    # Judge
+    # Judge. Loss is the primary ranker; the VLM judge at the proxy stage
+    # is informational, not decisive — a barely-trained LoRA produces
+    # near-identical samples and the VLM's score variance dominates.
+    # Sample weight rises naturally at the finals stage when there's
+    # something real to judge.
     judge_method: str = "none"
     judge_base_url: str = "http://localhost:1234/v1"
     judge_model: str = "qwen3-vl-8b-thinking-abliterated"
-    judge_loss_weight: float = 0.3
-    judge_sample_weight: float = 0.7
+    judge_loss_weight: float = 0.7
+    judge_sample_weight: float = 0.3
     # When True, send `chat_template_kwargs={"enable_thinking": false}`
     # to LMStudio so Qwen3-class VLMs skip the <think>...</think>
     # preamble. Roughly halves judge latency on thinking models. None

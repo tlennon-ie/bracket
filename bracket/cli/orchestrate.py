@@ -90,25 +90,30 @@ def main() -> int:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--budget", type=int, default=8,
                    help="number of unique candidate configs to try (excl. baseline)")
-    p.add_argument("--max-steps-per-run", type=int, default=200)
+    p.add_argument("--max-steps-per-run", type=int, default=1500,
+                   help="proxy-stage step budget per trial. Lower values (e.g. 300) "
+                        "reward configs that memorize the dataset and lose at full FT")
     p.add_argument("--max-wall-seconds-per-run", type=int, default=1200)
-    p.add_argument("--images-per-dataset", type=int, default=16)
+    p.add_argument("--images-per-dataset", type=int, default=0,
+                   help="cap per class subdir; 0 = use the full dataset. "
+                        "Small subsets bias toward overfit-friendly configs")
     p.add_argument("--subset-seed", type=int, default=0)
     p.add_argument("--search-seed", type=int, default=0)
     p.add_argument("--skip-baseline", action="store_true")
     p.add_argument("--mirror-stdout", action="store_true",
                    help="echo each candidate's stdout to console as well as logfile")
-    p.add_argument("--seeds-per-config", type=int, default=1,
+    p.add_argument("--seeds-per-config", type=int, default=2,
                    help="run each config N times with different seeds; "
                         ">=2 enables confidence intervals in the report")
     p.add_argument("--search", choices=("random", "optuna"), default="optuna",
                    help="search controller: optuna (TPE, smart) or random (uniform)")
     p.add_argument("--optuna-startup-trials", type=int, default=5,
                    help="number of random trials before TPE kicks in")
-    p.add_argument("--finals-top-k", type=int, default=0,
-                   help="if >0, after stage 1 re-run the top-K configs at "
-                        "--finals-max-steps to verify the short-run ranking")
-    p.add_argument("--finals-max-steps", type=int, default=2000)
+    p.add_argument("--finals-top-k", type=int, default=3,
+                   help="after stage 1 re-run the top-K configs at "
+                        "--finals-max-steps to verify the short-run ranking. "
+                        "0 = skip the finals stage (proxy-only)")
+    p.add_argument("--finals-max-steps", type=int, default=3000)
     p.add_argument("--finals-wall-seconds", type=int, default=7200)
     p.add_argument("--finals-seeds-per-config", type=int, default=2)
 
@@ -121,8 +126,10 @@ def main() -> int:
     p.add_argument("--judge", choices=("none", "lmstudio"), default="none")
     p.add_argument("--judge-base-url", default="http://localhost:1234/v1")
     p.add_argument("--judge-model", default="qwen3-vl-8b-thinking-abliterated")
-    p.add_argument("--judge-loss-weight", type=float, default=0.3)
-    p.add_argument("--judge-sample-weight", type=float, default=0.7)
+    p.add_argument("--judge-loss-weight", type=float, default=0.7,
+                   help="proxy-stage default favours loss: VLM scores on barely-trained "
+                        "samples are noisy. Bump sample weight at the finals stage")
+    p.add_argument("--judge-sample-weight", type=float, default=0.3)
 
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
