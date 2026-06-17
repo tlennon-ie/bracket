@@ -6,3 +6,7 @@
 	path = vendor/sd-scripts
 	url = https://github.com/kohya-ss/sd-scripts
 	shallow = true
+[submodule "vendor/ltx2"]
+	path = vendor/ltx2
+	url = https://github.com/Lightricks/LTX-2
+	shallow = true

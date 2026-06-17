@@ -174,6 +174,46 @@ def test_framepack_lora_preset_constructs_trainer(tmp_path):
     assert trainer.name == "framepack-lora-musubi"
 
 
+def _stub_ltx_trainer(tmp_path):
+    """Create a stub native ltx-trainer dir with the expected scripts."""
+    d = tmp_path / "ltx-trainer"
+    (d / "scripts").mkdir(parents=True)
+    (d / "scripts" / "train.py").write_text("# placeholder\n", encoding="utf-8")
+    (d / "scripts" / "process_dataset.py").write_text("# placeholder\n", encoding="utf-8")
+    return d
+
+
+def test_ltx2_presets_registered_and_distinct_from_ltx_video():
+    ids = [p.id for p in PRESETS]
+    assert "ltx2-t2v-lora" in ids
+    assert "ltx2-i2v-lora" in ids
+    # The native LTX-2 family is distinct from the musubi "LTX-Video" preset.
+    families = list_model_families()
+    assert "LTX-2" in families
+    assert "LTX-Video" in families
+
+
+def test_ltx2_t2v_lora_preset_constructs_trainer(tmp_path):
+    d = _stub_ltx_trainer(tmp_path)
+    preset = next(p for p in PRESETS if p.id == "ltx2-t2v-lora")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        trainer_dir=str(d), model_path="/x/model",
+        text_encoder_path="/x/gemma", vram_gb=32.0,
+    )
+    assert trainer.name == "ltx2-lora-t2v"
+
+
+def test_ltx2_i2v_lora_preset_constructs_trainer(tmp_path):
+    d = _stub_ltx_trainer(tmp_path)
+    preset = next(p for p in PRESETS if p.id == "ltx2-i2v-lora")
+    trainer = preset.trainer_factory(
+        trainer_dir=str(d), model_path="/x/model",
+        text_encoder_path="/x/gemma", vram_gb=32.0,
+    )
+    assert trainer.name == "ltx2-lora-i2v"
+
+
 def test_sd35_lora_preset_constructs_trainer(tmp_path):
     sd = tmp_path / "sd-scripts"
     sd.mkdir()

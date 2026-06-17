@@ -27,6 +27,7 @@ logger = logging.getLogger("bracket.scorer")
 from bracket.ema import EMASmoother
 from bracket.frame import LossFrame
 from bracket.judge.base import JudgeReport, SampleJudge
+from bracket.log_loss_reader import parse_log_loss
 from bracket.tfevents_reader import TFEventsTail
 from bracket.video import (
     VIDEO_EXTENSIONS, extract_all_videos, is_video_file, list_video_samples,
@@ -38,6 +39,15 @@ from bracket.video import (
 # by stem so the judge knows which prompt produced which image.
 _SAMPLE_STEM_RE = re.compile(r"^(?P<base>.+)\.(?P<ext>png|jpg|jpeg|webp)$", re.IGNORECASE)
 _VIDEO_STEM_RE = re.compile(r"^(?P<base>.+)\.(?P<ext>mp4|webm|mov|mkv)$", re.IGNORECASE)
+
+# LTX-2 (ltx-trainer) writes validation samples as
+# ``step_{step:06d}_{idx+1}.{mp4|png|wav}`` with NO sidecar .txt, where
+# ``idx+1`` is a 1-BASED index into the prompts list. When the video pipeline
+# extracts frames, the frame stem becomes ``step_{step:06d}_{idx+1}_frameNN``
+# (see ``video.extract_frames``), so the trailing ``_frameNN`` is optional.
+_LTX2_STEP_STEM_RE = re.compile(
+    r"^step_\d+_(?P<one_based_idx>\d+)(?:_frame\d+)?$", re.IGNORECASE
+)
 
 
 @dataclass
@@ -101,6 +111,27 @@ class Scorer:
             )
         return self._score_frames(frames)
 
+    def score_log_loss(self, loss_log_path: Optional[Path]) -> ScoreReport:
+        """Loss-only scoring from a stdout-log file (LTX-2 / ltx-trainer).
+
+        The stdout-log analog of ``score_tfevents``: parse the run's log file
+        into LossFrames and run the SAME ``_score_frames`` divergence / slope /
+        NaN logic. Disqualifies with ``no_loss_log`` / ``empty_loss_log`` —
+        the stdout-log counterparts of ``no_tfevents`` / ``empty_tfevents``.
+        """
+        if loss_log_path is None or not Path(loss_log_path).exists():
+            return ScoreReport(
+                score=math.inf, components={}, n_steps=0,
+                disqualified="no_loss_log",
+            )
+        frames = parse_log_loss(loss_log_path, ema_alpha=self.ema_alpha)
+        if not frames:
+            return ScoreReport(
+                score=math.inf, components={}, n_steps=0,
+                disqualified="empty_loss_log",
+            )
+        return self._score_frames(frames)
+
     def score_run(
         self,
         *,
@@ -108,8 +139,22 @@ class Scorer:
         sample_dir: Optional[Path] = None,
         prompts: Optional[list[str]] = None,
         n_in_dist_prompts: Optional[int] = None,
+        loss_log_path: Optional[Path] = None,
+        loss_source: str = "tfevents",
     ) -> ScoreReport:
         """Score a full run: loss component + sample component (if judge + samples).
+
+        The loss component comes from tfevents when ``tfevents_path`` is present
+        (every existing trainer). Otherwise, when ``loss_log_path`` is given,
+        the loss curve is parsed from the trainer's stdout log (LTX-2 /
+        ltx-trainer) and fed through the SAME ``_score_frames`` path so the
+        divergence / slope / NaN disqualification logic is identical. tfevents
+        is always preferred when both are supplied. ``loss_source`` (the
+        candidate's ``LaunchSpec.loss_source``) gates the stdout-log fallback:
+        only ``"stdout_log"`` trainers fall through to ``score_log_loss``. A
+        tfevents trainer that produced no events (crashed/killed before the
+        first write) keeps the historical ``no_tfevents`` disqualification —
+        we never relabel it ``empty_loss_log`` off the always-present run log.
 
         When ``n_in_dist_prompts`` is set, prompts at indices ``[0, n)`` are
         treated as in-distribution and the rest (typically those concatenated
@@ -119,7 +164,18 @@ class Scorer:
         reason about both axes. The aggregate ``score`` field is unchanged
         for backward compat — it stays the mean across ALL judgements.
         """
-        report = self.score_tfevents(tfevents_path)
+        if tfevents_path is not None:
+            report = self.score_tfevents(tfevents_path)
+        elif loss_source == "stdout_log":
+            # ``score_log_loss`` handles a None/missing path itself (→
+            # ``no_loss_log``), so the discriminator is purely ``loss_source``.
+            report = self.score_log_loss(loss_log_path)
+        else:
+            # tfevents trainer that wrote no events (crashed/killed before the
+            # first write). ``tfevents_path`` is None here, so this yields the
+            # historical ``no_tfevents`` DQ — NOT ``empty_loss_log`` off the
+            # always-present run log. Keeps ledger/report reasons consistent.
+            report = self.score_tfevents(tfevents_path)
         if report.disqualified is not None:
             return report
         if self.sample_judge is None or sample_dir is None or not prompts:
@@ -379,7 +435,16 @@ def _pair_samples_with_prompts(
 
 
 def _extract_prompt_idx(stem: str) -> Optional[int]:
-    """Return the prompt index from a sample filename stem, or None."""
+    """Return the 0-based prompt index from a sample filename stem, or None."""
+    # LTX-2 (ltx-trainer): ``step_<step>_<idx+1>`` with a 1-BASED index, and an
+    # optional ``_frameNN`` suffix when the index survives video-frame
+    # extraction. Checked first because the bare-int branches below would read
+    # the 1-based index as if it were 0-based.
+    ltx = _LTX2_STEP_STEM_RE.match(stem)
+    if ltx is not None:
+        one_based = int(ltx.group("one_based_idx"))
+        if one_based >= 1:
+            return one_based - 1
     parts = stem.split("_")
     # musubi: idx sits one position before a 14-digit timestamp segment.
     for i, p in enumerate(parts):

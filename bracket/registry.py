@@ -126,6 +126,19 @@ _DEFAULT_UMT5_PATH = _env_or_default("BRACKET_UMT5_PATH", "")
 # LTX-Video
 _DEFAULT_LTX_VIDEO_DIT_PATH = _env_or_default("BRACKET_LTX_VIDEO_DIT_PATH", "")
 _DEFAULT_LTX_VIDEO_VAE_PATH = _env_or_default("BRACKET_LTX_VIDEO_VAE_PATH", "")
+# LTX-2 (Lightricks' native ltx-trainer — YAML-driven, Gemma text encoder)
+_DEFAULT_LTX2_MODEL_PATH = _env_or_default("BRACKET_LTX2_MODEL_PATH", "")
+_DEFAULT_LTX2_TEXT_ENCODER_PATH = _env_or_default("BRACKET_LTX2_TEXT_ENCODER_PATH", "")
+
+
+def _ltx2_trainer_dir_default() -> str:
+    """Resolve the ltx-trainer package dir — env var or repo-vendored layout."""
+    if (env := os.environ.get("BRACKET_LTX2_TRAINER_DIR")):
+        return env
+    return _first_existing(_REPO_VENDOR / "ltx2" / "packages" / "ltx-trainer")
+
+
+_DEFAULT_LTX2_TRAINER_DIR = _ltx2_trainer_dir_default()
 
 
 @dataclass(frozen=True)
@@ -354,6 +367,28 @@ def _build_ltx_video_lora(**kw: Any) -> Trainer:
     )
 
 
+def _build_ltx2_t2v_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.ltx2_lora import LTX2LoRATrainer
+    return LTX2LoRATrainer(
+        trainer_dir=kw["trainer_dir"],
+        model_path=kw["model_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        mode="t2v",
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_ltx2_i2v_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.ltx2_lora import LTX2LoRATrainer
+    return LTX2LoRATrainer(
+        trainer_dir=kw["trainer_dir"],
+        model_path=kw["model_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        mode="i2v",
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
 def _build_framepack_lora(**kw: Any) -> Trainer:
     from bracket.trainer.framepack_lora import FramePackLoRATrainer
     return FramePackLoRATrainer(
@@ -388,6 +423,16 @@ _VAE_FIELD = FieldSpec(
     name="vae_path", label="VAE weights (.safetensors) *",
     default=_DEFAULT_VAE_PATH, required=True, kind="path",
     help="Path to the VAE checkpoint (.safetensors). Set BRACKET_VAE_PATH to change the default.",
+)
+
+_LTX2_TRAINER_DIR_FIELD = FieldSpec(
+    name="trainer_dir", label="ltx-trainer directory *",
+    default=_DEFAULT_LTX2_TRAINER_DIR, required=True, kind="dir",
+    help=(
+        "Path to Lightricks' native ltx-trainer package "
+        "(<ltx2>/packages/ltx-trainer). Set BRACKET_LTX2_TRAINER_DIR to change "
+        "the default."
+    ),
 )
 
 
@@ -925,6 +970,62 @@ PRESETS: tuple[ModelPreset, ...] = (
         notes=(
             "Wraps `musubi-tuner/ltxv_train_network.py`. Smallest of the supported "
             "video DiTs (~2B) — much faster per-step than Wan / Hunyuan."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── LTX-2 (native ltx-trainer) ───────────────────────────
+    ModelPreset(
+        id="ltx2-t2v-lora",
+        model_family="LTX-2",
+        training_type="LoRA",
+        display_name="LTX-2 · T2V LoRA",
+        trainer_factory=_build_ltx2_t2v_lora,
+        fields=(
+            FieldSpec(
+                name="model_path", label="LTX-2 model path *",
+                default=_DEFAULT_LTX2_MODEL_PATH, required=True, kind="path",
+                help="LTX-2 model weights/checkpoint. Set BRACKET_LTX2_MODEL_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Gemma text encoder *",
+                default=_DEFAULT_LTX2_TEXT_ENCODER_PATH, required=True, kind="path",
+                help="LTX-2 uses Gemma as its text encoder. Set BRACKET_LTX2_TEXT_ENCODER_PATH.",
+            ),
+            _LTX2_TRAINER_DIR_FIELD,
+        ),
+        notes=(
+            "Drives Lightricks' **native** `ltx-trainer` (`scripts/train.py`) — "
+            "YAML-config-driven, Gemma text encoder, joint audio-video. Distinct "
+            "from the musubi-tuner *LTX-Video* preset above. Preprocessing "
+            "(`scripts/process_dataset.py`) runs once per session into a "
+            "deterministic cache reused by every candidate."
+        ),
+        needs_pre_cache=True,
+    ),
+    ModelPreset(
+        id="ltx2-i2v-lora",
+        model_family="LTX-2",
+        training_type="LoRA",
+        display_name="LTX-2 · I2V LoRA",
+        trainer_factory=_build_ltx2_i2v_lora,
+        fields=(
+            FieldSpec(
+                name="model_path", label="LTX-2 model path *",
+                default=_DEFAULT_LTX2_MODEL_PATH, required=True, kind="path",
+                help="LTX-2 model weights/checkpoint. Set BRACKET_LTX2_MODEL_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Gemma text encoder *",
+                default=_DEFAULT_LTX2_TEXT_ENCODER_PATH, required=True, kind="path",
+                help="LTX-2 uses Gemma as its text encoder. Set BRACKET_LTX2_TEXT_ENCODER_PATH.",
+            ),
+            _LTX2_TRAINER_DIR_FIELD,
+        ),
+        notes=(
+            "Image-to-video variant of the native LTX-2 `ltx-trainer`. Adds a "
+            "`first_frame` condition to the flexible training strategy. "
+            "YAML-config-driven, Gemma text encoder, joint audio-video. "
+            "Preprocessing runs once per session into a deterministic cache."
         ),
         needs_pre_cache=True,
     ),

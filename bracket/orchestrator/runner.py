@@ -182,7 +182,13 @@ class RunLauncher:
                 pass
 
         duration = time.monotonic() - start
-        tfevents = self._find_tfevents(spec.tfevents_glob)
+        # Stdout-log trainers (e.g. LTX-2) never write tfevents — skip the glob
+        # entirely so we don't pick up a stale file from a sibling run. The
+        # scorer reads the loss curve from ``log_path`` instead.
+        if spec.loss_source == "stdout_log":
+            tfevents = None
+        else:
+            tfevents = self._find_tfevents(spec.tfevents_glob)
         if killed_by_user:
             err = "stopped_by_user"
         elif killed_by_pruner:
