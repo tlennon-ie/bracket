@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/license-MIT-1f1f1f.svg" alt="License MIT">
   <img src="https://img.shields.io/badge/python-3.10%2B-1f1f1f.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/cross--platform-linux%20%C2%B7%20mac%20%C2%B7%20windows-1f1f1f.svg" alt="Cross-platform">
-  <img src="https://img.shields.io/badge/trainers-sd--scripts%20%C2%B7%20musubi--tuner-1f1f1f.svg" alt="Trainers">
+  <img src="https://img.shields.io/badge/trainers-sd--scripts%20%C2%B7%20musubi--tuner%20%C2%B7%20ltx--trainer-1f1f1f.svg" alt="Trainers">
 </p>
 
 ![bracket Monitor tab — live loss chart, score history, sticky run controls](./assets/screenshots/monitor.png)
@@ -24,7 +24,7 @@ bracket is a single-machine hyperparameter-search and ranking tool for diffusion
 
 It drives the trainers you already use through real `accelerate launch` subprocesses. It does not re-implement training.
 
-- Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA).
+- Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA), and LTX-2 video (T2V + I2V LoRA) via the native Lightricks `ltx-trainer`.
 - Search: Optuna TPE with curated warm-start, or Random. User-set `lr_min/max` and `batch_size_min/max` bounds clamp every run in the session — baseline and curated configs included, not just sampled trials.
 - Judge: local LMStudio + Qwen3-VL by default. Hot-swappable.
 - Stats: Welch's t-test on best vs runner-up. Honest about single-seed results.
@@ -118,7 +118,7 @@ Tab transitions are 200ms. The Monitor's loss chart updates over WebSocket — n
 
 | Concern | Single source of truth |
 |---|---|
-| Trainer adapters (SDXL, Z-Image, Flux-2-Klein) | [`bracket/trainer/`](./bracket/trainer/) |
+| Trainer adapters (SDXL, Z-Image, Flux-2-Klein, LTX-2) | [`bracket/trainer/`](./bracket/trainer/) |
 | Hyperparameter search controllers | [`bracket/search/`](./bracket/search/) |
 | Run launcher (subprocess + tfevents) | [`bracket/orchestrator/runner.py`](./bracket/orchestrator/runner.py) |
 | Scoring (loss + VLM) | [`bracket/orchestrator/scorer.py`](./bracket/orchestrator/scorer.py) |
