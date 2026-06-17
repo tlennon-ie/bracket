@@ -31,6 +31,14 @@ class LaunchSpec:
     logging_dir: Path
     tfevents_glob: str
     sample_dir: Optional[Path] = None
+    # Where the per-run loss curve comes from:
+    #   "tfevents"   — the trainer writes TensorBoard event files; the runner
+    #                  globs ``tfevents_glob`` and the scorer reads scalars
+    #                  (every existing adapter; the default keeps them intact).
+    #   "stdout_log" — the trainer only logs loss to stdout (e.g. LTX-2 /
+    #                  ltx-trainer). The runner skips the tfevents glob and the
+    #                  scorer parses ``RunResult.log_path`` via log_loss_reader.
+    loss_source: str = "tfevents"
 
 
 def make_accelerate_launch_prefix(

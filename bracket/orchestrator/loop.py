@@ -116,6 +116,14 @@ def _execute_one(
         sample_dir=spec.sample_dir,
         prompts=judge_prompts,
         n_in_dist_prompts=n_in_dist_prompts,
+        # Passed unconditionally — the scorer prefers tfevents when present and
+        # only falls back to the stdout log for trainers that don't write
+        # tfevents (LTX-2 / ltx-trainer). Harmless for tfevents trainers.
+        loss_log_path=result.log_path,
+        # ``loss_source`` gates the fallback: only ``stdout_log`` candidates
+        # parse the log. A tfevents trainer with no events keeps its
+        # ``no_tfevents`` DQ instead of being relabelled ``empty_loss_log``.
+        loss_source=spec.loss_source,
     )
     # Free the VLM's VRAM before the next training run starts. The judge's
     # eject() is a no-op when it has nothing to release; LMStudio's
@@ -143,6 +151,18 @@ def _build_live_check(
     is disabled.
     """
     if pruner is None:
+        return None
+
+    # Live pruning is tfevents-based. Trainers that only log loss to stdout
+    # (LTX-2 / ltx-trainer, ``loss_source="stdout_log"``) have no live tail
+    # yet — they run to completion and are scored post-hoc from the log file.
+    # Skip building the tail so these runs degrade gracefully: no live frames,
+    # no false-positive divergence kill, no crash.
+    if getattr(spec, "loss_source", "tfevents") != "tfevents":
+        logger.debug(
+            "run %s: loss_source=%s — skipping live pruning (scored post-hoc)",
+            run_id, getattr(spec, "loss_source", "tfevents"),
+        )
         return None
 
     glob_pattern = spec.tfevents_glob

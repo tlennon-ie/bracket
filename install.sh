@@ -7,10 +7,11 @@
 #   3. Detects GPU (nvidia-smi) and selects a matching PyTorch wheel.
 #   4. Installs Bracket + its dependencies.
 #   5. Builds the React frontend (frontend/dist) if Node.js/npm is present.
-#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner) as
+#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner, ltx2) as
 #      pinned git submodules under vendor/ and creates a shared trainer
-#      venv at vendor/venv. Bumping a trainer is a maintainer commit; see
-#      docs/UPDATING_TRAINERS.md.
+#      venv at vendor/venv. The native LTX-2 trainer is uv-managed, so it
+#      gets its own .venv via `uv sync` (skipped if uv is absent). Bumping a
+#      trainer is a maintainer commit; see docs/UPDATING_TRAINERS.md.
 #   7. Writes a .env with sensible defaults so the UI lands ready to run.
 #
 # Re-run is safe — every step is idempotent.
@@ -125,10 +126,15 @@ fi
 step "Syncing trainer submodules under vendor/"
 MUSUBI_DIR="$VENDOR_ROOT/musubi-tuner"
 SD_SCRIPTS_DIR="$VENDOR_ROOT/sd-scripts"
+LTX2_DIR="$VENDOR_ROOT/ltx2"
+LTX2_TRAINER_DIR="$LTX2_DIR/packages/ltx-trainer"
 
-# `git submodule update --init` is idempotent. Pinned commits live in
-# .gitmodules at the repo root — bumping a trainer is a maintainer commit,
-# not something this installer does. See docs/UPDATING_TRAINERS.md.
+# `git submodule update --init --recursive` is idempotent and picks up every
+# submodule declared in .gitmodules (musubi-tuner, sd-scripts, ltx2). Pinned
+# commits live in .gitmodules at the repo root — bumping a trainer is a
+# maintainer commit, not something this installer does. The ltx2 gitlink is
+# created once by a maintainer (see docs/UPDATING_TRAINERS.md); until then
+# --init simply no-ops for it. See docs/UPDATING_TRAINERS.md.
 git submodule update --init --recursive
 [ -d "$MUSUBI_DIR" ] || fail "vendor/musubi-tuner missing after submodule update"
 [ -d "$SD_SCRIPTS_DIR" ] || fail "vendor/sd-scripts missing after submodule update"
@@ -170,6 +176,25 @@ python -c "import musubi_tuner" >/dev/null 2>&1 \
 ok "Trainer deps installed (musubi_tuner importable)"
 
 deactivate
+
+# ─── 6b. Native LTX-2 trainer (uv-managed) ─────────────────────────
+# Lightricks' ltx-trainer is a uv project — it manages its own .venv and
+# dependencies via `uv sync`, separate from the shared vendor/venv above.
+# It is optional: if the gitlink hasn't been created yet (see
+# docs/UPDATING_TRAINERS.md) or uv isn't installed, we skip it with a
+# clear message rather than failing the whole install.
+step "Setting up native LTX-2 trainer (uv-managed)"
+if [ ! -d "$LTX2_TRAINER_DIR" ]; then
+    warn "vendor/ltx2 not present (submodule gitlink not created yet) — skipping LTX-2 trainer setup. See docs/UPDATING_TRAINERS.md."
+elif ! command -v uv >/dev/null 2>&1; then
+    warn "uv not found — skipping LTX-2 trainer setup. Install uv (https://docs.astral.sh/uv/) then re-run this installer to enable the native LTX-2 trainer. (Other trainers still work without it.)"
+else
+    (
+        cd "$LTX2_TRAINER_DIR" || exit 1
+        uv sync
+    ) || fail "uv sync failed in $LTX2_TRAINER_DIR — see output above"
+    ok "LTX-2 trainer environment ready (uv sync in $LTX2_TRAINER_DIR)"
+fi
 
 # Refresh a single KEY=value line in an existing .env file. No-op if
 # the current value already matches $want; otherwise replaces in place
@@ -273,9 +298,14 @@ $lms_line
 # BRACKET_WAN_VAE_PATH=/abs/path/to/wan-vae.safetensors
 # BRACKET_UMT5_PATH=/abs/path/to/umt5-xxl.safetensors
 
-# ─── LTX-Video ──────────────────────────────────────────────────────
+# ─── LTX-Video (musubi-tuner backend) ───────────────────────────────
 # BRACKET_LTX_VIDEO_DIT_PATH=/abs/path/to/ltx-video-dit.safetensors
 # BRACKET_LTX_VIDEO_VAE_PATH=/abs/path/to/ltx-video-vae.safetensors
+
+# ─── LTX-2 (native Lightricks ltx-trainer; Gemma TE, single .safetensors) ──
+# BRACKET_LTX2_MODEL_PATH=/abs/path/to/ltx-2.safetensors
+# BRACKET_LTX2_TEXT_ENCODER_PATH=/abs/path/to/gemma-text-encoder
+# BRACKET_LTX2_TRAINER_DIR=$LTX2_TRAINER_DIR
 EOF
     ok "Wrote .env"
 else

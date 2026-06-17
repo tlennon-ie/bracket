@@ -30,6 +30,18 @@ It drives the trainers you already use through real `accelerate launch` subproce
 - Stats: Welch's t-test on best vs runner-up. Honest about single-seed results.
 - Pre-flight: dataset validation (caption coverage, empty captions, missing image dirs) catches the obvious-but-easy-to-miss problems before a single GPU second is spent. Existing latent caches are detected and re-used via sd-scripts' `--skip_cache_check`.
 
+### Supported trainers
+
+| Model · mode | Notes |
+|---|---|
+| SDXL · LoRA + full FT | sd-scripts backend. |
+| Z-Image (base / Turbo) · LoRA + full FT | musubi-tuner backend. |
+| Flux-2-Klein 9B · LoRA | musubi-tuner backend. |
+| LTX-2 · T2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video); distinct from the musubi-tuner "LTX-Video" row. |
+| LTX-2 · I2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video); distinct from the musubi-tuner "LTX-Video" row. |
+
+LTX-2 full fine-tune is out of scope (needs 4-8× H100 + FSDP).
+
 No cloud. No paid tier. No telemetry.
 
 ## Who it's for
