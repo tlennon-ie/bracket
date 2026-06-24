@@ -1,18 +1,33 @@
-"""Flux-2-Klein LoRA trainer adapter — wraps musubi-tuner flux_2_train_network.
+"""Flux-2-dev LoRA trainer adapter — wraps musubi-tuner flux_2_train_network.
 
-Same musubi conventions as Z-Image:
+Sibling of the Flux-2-Klein adapter, but for the full FLUX.2-dev model
+(``--model_version dev``) rather than the distilled klein variants. Same
+musubi conventions:
   - batch_size in dataset TOML
   - no on-the-fly cache_latents (use musubi pre-cache scripts; orchestrator
     runs them automatically via session_setup_commands)
   - flow-matching: --timestep_sampling, --discrete_flow_shift
 
-Flux-2-Klein 9B fp8 fits comfortably in 32 GB; --fp8_base / --fp8_scaled
-are optional VRAM savers.
+How FLUX.2-dev differs from FLUX.2-klein (per upstream docs/flux_2.md and the
+pinned vendor/musubi-tuner sources):
+  - ``--model_version dev`` selects the full ~32B model (klein selects the
+    distilled 4B/9B variants). The selector is mandatory here; the klein
+    adapter relies on the upstream default.
+  - Text encoder is **Mistral-3** (klein uses Qwen3). ``--fp8_text_encoder``
+    is NOT available for Mistral-3, so it is never emitted.
+  - LoRA network module is ``networks.lora_flux_2`` (the FLUX.2 module).
+  - Timestep sampling is ``flux2_shift`` (the FLUX.2-specific schedule).
+  - Weights point at ``flux2-dev.safetensors`` (DiT), ``ae.safetensors``
+    (VAE), and the first Mistral-3 split file (text encoder).
+
+FLUX.2-dev is a ~32B model — far heavier than klein's 9B. ``--fp8_base`` /
+``--fp8_scaled`` are pinned on (both required for the DiT in fp8) and
+gradient checkpointing defaults conservatively.
 """
 
 from __future__ import annotations
 
-import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -20,8 +35,8 @@ from typing import Any, Mapping, Optional
 from bracket.dataset.runtime import derive_run_toml
 from bracket.hardware import (
     MUSUBI_DATALOADER_WORKERS_BY_TIER,
-    SDXL_LORA_BATCH_CHOICES_BY_TIER,
-    SDXL_LORA_DEFAULT_BATCH_BY_TIER,
+    VIDEO_LORA_BATCH_CHOICES_BY_TIER,
+    VIDEO_LORA_DEFAULT_BATCH_BY_TIER,
     detect_gpu,
     lora_grad_ckpt_baseline,
     lora_grad_ckpt_varies,
@@ -35,13 +50,27 @@ from bracket.search.space import (
     SearchSpace,
 )
 from bracket.trainer.base import (
-    LaunchSpec, Trainer, TrainerConfig,
-    make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
+    LaunchSpec,
+    Trainer,
+    TrainerConfig,
+    make_accelerate_launch_prefix,
+    make_subprocess_env,
+    resolve_save_every_n_steps,
 )
+
+logger = logging.getLogger("bracket.trainer.flux2_dev_lora")
+
+# FLUX.2-dev is the full ~32B model — its activations/weights dominate VRAM,
+# so it stays on the conservative video-style batch tables (bs=1 nearly
+# everywhere) rather than the SDXL image tables that the 9B klein uses.
+_MODEL_CLASS = "flux2-full"
+_MODEL_VERSION = "dev"
+_NETWORK_MODULE = "networks.lora_flux_2"
+_TIMESTEP_SAMPLING = "flux2_shift"
 
 
 @dataclass
-class Flux2KleinLoRAConfig(TrainerConfig):
+class Flux2DevLoRAConfig(TrainerConfig):
     learning_rate: float = 1e-4
     optimizer_type: str = "AdamW8bit"
     lr_scheduler: str = "cosine"
@@ -59,8 +88,8 @@ class Flux2KleinLoRAConfig(TrainerConfig):
     dataloader_workers: int = 2
 
 
-class Flux2KleinLoRATrainer(Trainer):
-    name = "flux2-klein-lora-musubi"
+class Flux2DevLoRATrainer(Trainer):
+    name = "flux2-dev-lora"
 
     def __init__(
         self,
@@ -77,7 +106,9 @@ class Flux2KleinLoRATrainer(Trainer):
         self.dit_path = dit_path
         self.vae_path = vae_path
         self.text_encoder_path = text_encoder_path
-        self.train_script = self.musubi_dir / "src" / "musubi_tuner" / "flux_2_train_network.py"
+        self.train_script = (
+            self.musubi_dir / "src" / "musubi_tuner" / "flux_2_train_network.py"
+        )
         if not self.train_script.exists():
             self.train_script = self.musubi_dir / "flux_2_train_network.py"
         if not self.train_script.exists():
@@ -93,12 +124,12 @@ class Flux2KleinLoRATrainer(Trainer):
         self.tier = vram_tier(self.vram_gb)
 
     def declare_search_space(self) -> SearchSpace:
-        if lora_grad_ckpt_varies(self.tier, "flux2-klein"):
+        if lora_grad_ckpt_varies(self.tier, _MODEL_CLASS):
             ckpt_knob = CategoricalKnob(choices=(True, False))
         else:
             ckpt_knob = FixedKnob(value=True)
         return SearchSpace(
-            name=f"flux2-klein-lora-v0.2-{self.tier}",
+            name=f"flux2-dev-lora-v0.2-{self.tier}",
             knobs={
                 "learning_rate": FloatKnob(low=1e-6, high=2e-4, log=True),
                 "optimizer_type": CategoricalKnob(
@@ -112,10 +143,12 @@ class Flux2KleinLoRATrainer(Trainer):
                 "network_alpha": CategoricalKnob(choices=(4.0, 8.0, 16.0, 32.0)),
                 "discrete_flow_shift": FloatKnob(low=2.0, high=5.0),
                 "train_batch_size": CategoricalKnob(
-                    choices=SDXL_LORA_BATCH_CHOICES_BY_TIER[self.tier],
+                    choices=VIDEO_LORA_BATCH_CHOICES_BY_TIER[self.tier],
                 ),
                 "gradient_checkpointing": ckpt_knob,
-                "dataloader_workers": FixedKnob(value=MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]),
+                "dataloader_workers": FixedKnob(
+                    value=MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier],
+                ),
                 "gradient_accumulation_steps": FixedKnob(value=1),
                 "mixed_precision": FixedKnob(value="bf16"),
                 "max_grad_norm": FixedKnob(value=1.0),
@@ -124,22 +157,22 @@ class Flux2KleinLoRATrainer(Trainer):
             },
         )
 
-    def baseline_config(self) -> Flux2KleinLoRAConfig:
-        return Flux2KleinLoRAConfig(
+    def baseline_config(self) -> Flux2DevLoRAConfig:
+        return Flux2DevLoRAConfig(
             learning_rate=1e-4,
-            train_batch_size=SDXL_LORA_DEFAULT_BATCH_BY_TIER[self.tier],
-            gradient_checkpointing=lora_grad_ckpt_baseline(self.tier, "flux2-klein"),
+            train_batch_size=VIDEO_LORA_DEFAULT_BATCH_BY_TIER[self.tier],
+            gradient_checkpointing=lora_grad_ckpt_baseline(self.tier, _MODEL_CLASS),
             dataloader_workers=MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier],
         )
 
     def curated_configs(self) -> list[TrainerConfig]:
-        bs = SDXL_LORA_DEFAULT_BATCH_BY_TIER[self.tier]
-        ckpt = lora_grad_ckpt_baseline(self.tier, "flux2-klein")
+        bs = VIDEO_LORA_DEFAULT_BATCH_BY_TIER[self.tier]
+        ckpt = lora_grad_ckpt_baseline(self.tier, _MODEL_CLASS)
         workers = MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]
         return [
-            # 1) Lower LR with warmup — Flux-2 trains slower than SDXL; 5e-5
-            #    is a safer starter.
-            Flux2KleinLoRAConfig(
+            # 1) Lower LR with warmup — the full FLUX.2 trains slowly; 5e-5
+            #    is a safer starter than the 1e-4 default.
+            Flux2DevLoRAConfig(
                 learning_rate=5e-5, optimizer_type="AdamW8bit",
                 lr_scheduler="cosine", lr_warmup_steps=100,
                 network_dim=32, network_alpha=16.0,
@@ -147,18 +180,18 @@ class Flux2KleinLoRATrainer(Trainer):
                 train_batch_size=bs, gradient_checkpointing=ckpt,
                 dataloader_workers=workers,
             ),
-            # 2) Prodigy auto-LR.
-            Flux2KleinLoRAConfig(
-                learning_rate=1.0, optimizer_type="Prodigy",
-                lr_scheduler="cosine", lr_warmup_steps=0,
-                network_dim=32, network_alpha=16.0,
+            # 2) Constant LR, no warmup — a stable point in the search space
+            #    that contrasts with the cosine+warmup starter above.
+            Flux2DevLoRAConfig(
+                learning_rate=1e-4, optimizer_type="AdamW8bit",
+                lr_scheduler="constant", lr_warmup_steps=0,
+                network_dim=16, network_alpha=8.0,
                 discrete_flow_shift=3.0,
                 train_batch_size=bs, gradient_checkpointing=ckpt,
                 dataloader_workers=workers,
             ),
-            # 3) Higher flow_shift end of the supported range — Flux-2
-            #    benefits more than SDXL from elevated shift.
-            Flux2KleinLoRAConfig(
+            # 3) Higher flow_shift end of the supported range.
+            Flux2DevLoRAConfig(
                 learning_rate=1e-4, optimizer_type="AdamW8bit",
                 lr_scheduler="cosine", lr_warmup_steps=100,
                 network_dim=32, network_alpha=16.0,
@@ -168,8 +201,8 @@ class Flux2KleinLoRATrainer(Trainer):
             ),
         ]
 
-    def config_from_dict(self, knobs: Mapping[str, Any]) -> Flux2KleinLoRAConfig:
-        return Flux2KleinLoRAConfig(
+    def config_from_dict(self, knobs: Mapping[str, Any]) -> Flux2DevLoRAConfig:
+        return Flux2DevLoRAConfig(
             learning_rate=float(knobs["learning_rate"]),
             optimizer_type=str(knobs["optimizer_type"]),
             lr_scheduler=str(knobs["lr_scheduler"]),
@@ -187,7 +220,9 @@ class Flux2KleinLoRATrainer(Trainer):
             dataloader_workers=int(knobs["dataloader_workers"]),
         )
 
-    def session_setup_commands(self, *, dataset_toml: Path, run_dir: Path) -> list[LaunchSpec]:
+    def session_setup_commands(
+        self, *, dataset_toml: Path, run_dir: Path,
+    ) -> list[LaunchSpec]:
         return _musubi_pre_cache_commands(
             musubi_dir=self.musubi_dir,
             venv_python=self.venv_python,
@@ -213,8 +248,10 @@ class Flux2KleinLoRATrainer(Trainer):
         save_state: bool = False,
         resume_from: Optional[Path] = None,
     ) -> LaunchSpec:
-        if not isinstance(config, Flux2KleinLoRAConfig):
-            raise TypeError(f"expected Flux2KleinLoRAConfig, got {type(config).__name__}")
+        if not isinstance(config, Flux2DevLoRAConfig):
+            raise TypeError(
+                f"expected Flux2DevLoRAConfig, got {type(config).__name__}"
+            )
         run_dir = Path(run_dir).resolve()
         output_dir = run_dir / "output"
         logging_dir = run_dir / "logs"
@@ -230,8 +267,11 @@ class Flux2KleinLoRATrainer(Trainer):
         )
 
         cmd: list[str] = [
-            *make_accelerate_launch_prefix(self.venv_python, mixed_precision=config.mixed_precision),
+            *make_accelerate_launch_prefix(
+                self.venv_python, mixed_precision=config.mixed_precision,
+            ),
             str(self.train_script),
+            "--model_version", _MODEL_VERSION,
             "--dit", self.dit_path,
             "--vae", self.vae_path,
             "--text_encoder", self.text_encoder_path,
@@ -241,7 +281,7 @@ class Flux2KleinLoRATrainer(Trainer):
             "--logging_dir", str(logging_dir),
             "--log_with", "tensorboard",
             "--log_prefix", "run_",
-            "--network_module", "networks.lora_flux_2",
+            "--network_module", _NETWORK_MODULE,
             "--network_dim", str(config.network_dim),
             "--network_alpha", str(config.network_alpha),
             "--learning_rate", f"{config.learning_rate:.10g}",
@@ -254,12 +294,13 @@ class Flux2KleinLoRATrainer(Trainer):
             "--max_train_steps", str(max_steps),
             "--seed", str(seed),
             "--sdpa",
-            "--timestep_sampling", "shift",
+            "--timestep_sampling", _TIMESTEP_SAMPLING,
             "--weighting_scheme", "none",
             "--discrete_flow_shift", f"{config.discrete_flow_shift:.4f}",
             "--max_data_loader_n_workers", str(config.dataloader_workers),
             "--persistent_data_loader_workers",
-            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
+            "--save_every_n_steps",
+            str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
             "--no_metadata",
         ]
         if config.gradient_checkpointing:
@@ -296,17 +337,12 @@ def _musubi_pre_cache_commands(
     cache_te_module: str,
     vae_path: str,
     text_encoder_path: str,
-    extra_args: Optional[list[str]] = None,
 ) -> list[LaunchSpec]:
-    """Common pre-caching cmd builder for musubi-tuner trainers.
+    """Common pre-caching cmd builder for musubi-tuner FLUX.2 trainers.
 
     Converts the (sd-scripts-nested) session subset TOML to a musubi-flat TOML
     inside run_dir/, then runs cache_latents and cache_text_encoder_outputs
     against it. Idempotent — the cache scripts skip files that already exist.
-
-    ``extra_args`` is appended verbatim to BOTH cache commands — used, e.g., to
-    pass ``--model_version edit-2509`` so the Qwen-Image-Edit caches encode the
-    control images and edit-aware text-encoder prompts.
     """
     env = make_subprocess_env()
     run_dir = Path(run_dir).resolve()
@@ -317,14 +353,12 @@ def _musubi_pre_cache_commands(
         target_path=run_dir / "dataset_flat.toml",
         target_format="musubi",
     )
-    tail = list(extra_args) if extra_args else []
     return [
         LaunchSpec(
             cmd=[
                 str(venv_python), "-m", cache_latents_module,
                 "--dataset_config", str(flat_toml),
                 "--vae", vae_path,
-                *tail,
             ],
             cwd=musubi_dir, env=env,
             output_dir=run_dir, logging_dir=logging_dir,
@@ -335,7 +369,6 @@ def _musubi_pre_cache_commands(
                 str(venv_python), "-m", cache_te_module,
                 "--dataset_config", str(flat_toml),
                 "--text_encoder", text_encoder_path,
-                *tail,
             ],
             cwd=musubi_dir, env=env,
             output_dir=run_dir, logging_dir=logging_dir,

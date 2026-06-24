@@ -26,6 +26,7 @@ def test_list_families_includes_all_supported():
     expected_extension = {
         "Flux.1", "Flux.1-Kontext", "Qwen-Image", "Qwen-Image-Edit",
         "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "LTX-Video", "FramePack",
+        "FLUX.2", "HiDream", "HunyuanVideo 1.5", "Kandinsky 5",
     }
     assert expected_extension.issubset(set(families))
 
@@ -46,6 +47,11 @@ def test_training_types_for_known_families():
     assert training_types_for("Wan 2.1") == ["LoRA"]
     assert training_types_for("LTX-Video") == ["LoRA"]
     assert training_types_for("FramePack") == ["LoRA"]
+    # Newly-wired musubi families (LoRA-only)
+    assert training_types_for("FLUX.2") == ["LoRA"]
+    assert training_types_for("HiDream") == ["LoRA"]
+    assert training_types_for("HunyuanVideo 1.5") == ["LoRA"]
+    assert training_types_for("Kandinsky 5") == ["LoRA"]
 
 
 def test_get_preset_known_and_unknown():
@@ -226,3 +232,52 @@ def test_sd35_lora_preset_constructs_trainer(tmp_path):
         pretrained_model="/x/sd3.5", vram_gb=32.0,
     )
     assert trainer.name == "sd35-lora-sd-scripts"
+
+
+def test_hidream_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "hidream_o1_train_network.py")
+    preset = get_preset("HiDream", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vram_gb=32.0,
+    )
+    assert trainer.name == "hidream-lora"
+
+
+def test_hunyuan_video_15_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "hv_1_5_train_network.py")
+    preset = get_preset("HunyuanVideo 1.5", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder_path="/x/qwen", byt5_path="/x/byt5",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "hunyuan-video-15-lora"
+
+
+def test_flux2_dev_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "flux_2_train_network.py")
+    preset = get_preset("FLUX.2", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/ae",
+        text_encoder_path="/x/mistral", vram_gb=32.0,
+    )
+    assert trainer.name == "flux2-dev-lora"
+
+
+def test_kandinsky5_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "kandinsky5_train_network.py")
+    preset = get_preset("Kandinsky 5", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae",
+        text_encoder_qwen_path="/x/qwen", text_encoder_clip_path="/x/clip",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "kandinsky5-lora"

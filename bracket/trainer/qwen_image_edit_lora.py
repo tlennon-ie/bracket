@@ -1,13 +1,21 @@
-"""Qwen-Image-Edit LoRA — wraps musubi-tuner qwen_image_edit_train_network.
+"""Qwen-Image-Edit LoRA — wraps musubi-tuner qwen_image_train_network.
 
 Edit variant takes a paired (source_image, target_image) dataset shape rather
-than (image, caption). Caching scripts and trainer module are distinct from
-plain Qwen-Image but the search-space shape is identical.
+than (image, caption). Upstream musubi-tuner unified the edit path onto the
+SAME scripts as plain Qwen-Image and selects the architecture with the
+``--model_version`` flag (``edit`` / ``edit-2509`` / ``edit-2511``) instead of
+shipping separate ``qwen_image_edit_*`` scripts. Without ``--model_version`` the
+unified script defaults to ``original`` (plain Qwen-Image), which would train
+the wrong architecture against Edit weights — so the flag is mandatory here.
 
-Module names (musubi-tuner upstream):
-  train:      musubi_tuner.qwen_image_edit_train_network
-  cache lat:  musubi_tuner.qwen_image_edit_cache_latents
-  cache TE:   musubi_tuner.qwen_image_edit_cache_text_encoder_outputs
+  - ``edit``       — original Qwen-Image-Edit (single control image).
+  - ``edit-2509``  — Edit-2509: multi-reference editing (up to 3 control images).
+  - ``edit-2511``  — Edit-2511: multi-reference editing, newer checkpoint.
+
+Module names (musubi-tuner upstream — shared with plain Qwen-Image):
+  train:      musubi_tuner.qwen_image_train_network        (+ --model_version)
+  cache lat:  musubi_tuner.qwen_image_cache_latents        (+ --model_version)
+  cache TE:   musubi_tuner.qwen_image_cache_text_encoder_outputs (+ --model_version)
 
 The dataset TOML for edit must declare both `image_directory` (target) and
 `control_directory` (source). Bracket leaves that as the user's responsibility
@@ -36,6 +44,9 @@ from bracket.trainer.base import (
 from bracket.trainer.qwen_image_lora import QwenImageLoRAConfig
 
 
+_VALID_MODEL_VERSIONS = ("edit", "edit-2509", "edit-2511")
+
+
 @dataclass
 class QwenImageEditLoRAConfig(QwenImageLoRAConfig):
     """Identical knob shape to QwenImageLoRAConfig — edit conditioning lives in
@@ -53,19 +64,28 @@ class QwenImageEditLoRATrainer(Trainer):
         dit_path: str,
         vae_path: str,
         text_encoder_path: str,
+        model_version: str = "edit-2509",
         vram_gb: Optional[float] = None,
     ) -> None:
+        if model_version not in _VALID_MODEL_VERSIONS:
+            raise ValueError(
+                f"model_version must be one of {_VALID_MODEL_VERSIONS}, got {model_version!r}"
+            )
+        self.model_version = model_version
         self.musubi_dir = Path(musubi_dir).resolve()
         self.venv_python = Path(venv_python).resolve()
         self.dit_path = dit_path
         self.vae_path = vae_path
         self.text_encoder_path = text_encoder_path
-        self.train_script = self.musubi_dir / "src" / "musubi_tuner" / "qwen_image_edit_train_network.py"
+        # Upstream unified the edit path onto the plain Qwen-Image scripts;
+        # the Edit architecture is selected with --model_version, not a
+        # separate qwen_image_edit_train_network.py (which no longer exists).
+        self.train_script = self.musubi_dir / "src" / "musubi_tuner" / "qwen_image_train_network.py"
         if not self.train_script.exists():
-            self.train_script = self.musubi_dir / "qwen_image_edit_train_network.py"
+            self.train_script = self.musubi_dir / "qwen_image_train_network.py"
         if not self.train_script.exists():
             raise FileNotFoundError(
-                f"qwen_image_edit_train_network.py not found under {self.musubi_dir}"
+                f"qwen_image_train_network.py not found under {self.musubi_dir}"
             )
         if not self.venv_python.exists():
             raise FileNotFoundError(f"venv python not found: {self.venv_python}")
@@ -169,10 +189,11 @@ class QwenImageEditLoRATrainer(Trainer):
             venv_python=self.venv_python,
             run_dir=run_dir,
             dataset_toml=dataset_toml,
-            cache_latents_module="musubi_tuner.qwen_image_edit_cache_latents",
-            cache_te_module="musubi_tuner.qwen_image_edit_cache_text_encoder_outputs",
+            cache_latents_module="musubi_tuner.qwen_image_cache_latents",
+            cache_te_module="musubi_tuner.qwen_image_cache_text_encoder_outputs",
             vae_path=self.vae_path,
             text_encoder_path=self.text_encoder_path,
+            extra_args=["--model_version", self.model_version],
         )
 
     def prepare_run(
@@ -211,6 +232,7 @@ class QwenImageEditLoRATrainer(Trainer):
             "--dit", self.dit_path,
             "--vae", self.vae_path,
             "--text_encoder", self.text_encoder_path,
+            "--model_version", self.model_version,
             "--dataset_config", str(run_toml),
             "--output_dir", str(output_dir),
             "--output_name", "candidate",
