@@ -307,6 +307,27 @@ $lmsLine
 # BRACKET_LTX2_MODEL_PATH=C:\path\to\ltx-2.safetensors
 # BRACKET_LTX2_TEXT_ENCODER_PATH=C:\path\to\gemma-text-encoder
 # BRACKET_LTX2_TRAINER_DIR=$ltx2TrainerDir
+
+# The presets below need an updated musubi-tuner checkout.
+
+# --- FLUX.2-dev (full FLUX.2; TE = Mistral-3, reuses BRACKET_MISTRAL3_TE_PATH) --
+# BRACKET_FLUX2_DEV_DIT_PATH=C:\path\to\flux2-dev.safetensors
+# BRACKET_FLUX2_DEV_VAE_PATH=C:\path\to\ae.safetensors
+
+# --- HiDream-O1 (single-file checkpoint; tokenizer/TE auto-load from HF) --
+# BRACKET_HIDREAM_DIT_PATH=C:\path\to\hidream-o1.safetensors
+
+# --- HunyuanVideo 1.5 (TE = Qwen2.5-VL + ByT5 glyph encoder) -----------
+# BRACKET_HUNYUAN_VIDEO_15_DIT_PATH=C:\path\to\hunyuan-video-1.5-dit.safetensors
+# BRACKET_HUNYUAN_VIDEO_15_VAE_PATH=C:\path\to\hunyuan-video-1.5-vae.safetensors
+# BRACKET_HUNYUAN_VIDEO_15_QWEN_TE_PATH=C:\path\to\qwen2_5_vl.safetensors
+# BRACKET_HUNYUAN_VIDEO_15_BYT5_PATH=C:\path\to\byt5.safetensors
+
+# --- Kandinsky 5 (dual TE: Qwen2.5-VL + CLIP-L) -----------------------
+# BRACKET_KANDINSKY5_DIT_PATH=C:\path\to\kandinsky5-dit.safetensors
+# BRACKET_KANDINSKY5_VAE_PATH=C:\path\to\kandinsky5-vae.safetensors
+# BRACKET_KANDINSKY5_QWEN_TE_PATH=C:\path\to\qwen2_5_vl.safetensors
+# BRACKET_KANDINSKY5_CLIP_TE_PATH=C:\path\to\clip_l.safetensors
 "@
     Set-Content -Path $envFile -Value $envBody -Encoding utf8
     Write-Ok "Wrote .env"

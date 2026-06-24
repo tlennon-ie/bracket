@@ -129,6 +129,21 @@ _DEFAULT_LTX_VIDEO_VAE_PATH = _env_or_default("BRACKET_LTX_VIDEO_VAE_PATH", "")
 # LTX-2 (Lightricks' native ltx-trainer — YAML-driven, Gemma text encoder)
 _DEFAULT_LTX2_MODEL_PATH = _env_or_default("BRACKET_LTX2_MODEL_PATH", "")
 _DEFAULT_LTX2_TEXT_ENCODER_PATH = _env_or_default("BRACKET_LTX2_TEXT_ENCODER_PATH", "")
+# HiDream-O1 — single-file checkpoint (--dit only); tokenizer/TE auto-load from HF
+_DEFAULT_HIDREAM_DIT_PATH = _env_or_default("BRACKET_HIDREAM_DIT_PATH", "")
+# HunyuanVideo 1.5 — Qwen2.5-VL TE + ByT5 glyph encoder (optional SigLIP image encoder for i2v)
+_DEFAULT_HUNYUAN_VIDEO_15_DIT_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_15_DIT_PATH", "")
+_DEFAULT_HUNYUAN_VIDEO_15_VAE_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_15_VAE_PATH", "")
+_DEFAULT_HUNYUAN_VIDEO_15_QWEN_TE_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_15_QWEN_TE_PATH", "")
+_DEFAULT_HUNYUAN_VIDEO_15_BYT5_PATH = _env_or_default("BRACKET_HUNYUAN_VIDEO_15_BYT5_PATH", "")
+# FLUX.2-dev — full FLUX.2 (distinct from the Klein 9B distill); TE reuses Mistral-3
+_DEFAULT_FLUX2_DEV_DIT_PATH = _env_or_default("BRACKET_FLUX2_DEV_DIT_PATH", "")
+_DEFAULT_FLUX2_DEV_VAE_PATH = _env_or_default("BRACKET_FLUX2_DEV_VAE_PATH", "")
+# Kandinsky 5 — dual TE (Qwen2.5-VL + CLIP-L)
+_DEFAULT_KANDINSKY5_DIT_PATH = _env_or_default("BRACKET_KANDINSKY5_DIT_PATH", "")
+_DEFAULT_KANDINSKY5_VAE_PATH = _env_or_default("BRACKET_KANDINSKY5_VAE_PATH", "")
+_DEFAULT_KANDINSKY5_QWEN_TE_PATH = _env_or_default("BRACKET_KANDINSKY5_QWEN_TE_PATH", "")
+_DEFAULT_KANDINSKY5_CLIP_TE_PATH = _env_or_default("BRACKET_KANDINSKY5_CLIP_TE_PATH", "")
 
 
 def _ltx2_trainer_dir_default() -> str:
@@ -288,6 +303,7 @@ def _build_qwen_image_edit_lora(**kw: Any) -> Trainer:
         musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
         dit_path=kw["dit_path"], vae_path=kw["vae_path"],
         text_encoder_path=kw["text_encoder_path"],
+        model_version=kw.get("model_version", "edit-2509"),
         vram_gb=kw.get("vram_gb"),
     )
 
@@ -396,6 +412,48 @@ def _build_framepack_lora(**kw: Any) -> Trainer:
         dit_path=kw["dit_path"], vae_path=kw["vae_path"],
         text_encoder1_path=kw["text_encoder1_path"],
         text_encoder2_path=kw["text_encoder2_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_hidream_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.hidream_lora import HiDreamLoRATrainer
+    return HiDreamLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_hunyuan_video_15_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.hunyuan_video_15_lora import HunyuanVideo15LoRATrainer
+    return HunyuanVideo15LoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        byt5_path=kw["byt5_path"],
+        task="t2v",
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_flux2_dev_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.flux2_dev_lora import Flux2DevLoRATrainer
+    return Flux2DevLoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_kandinsky5_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.kandinsky5_lora import Kandinsky5LoRATrainer
+    return Kandinsky5LoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_qwen_path=kw["text_encoder_qwen_path"],
+        text_encoder_clip_path=kw["text_encoder_clip_path"],
         vram_gb=kw.get("vram_gb"),
     )
 
@@ -550,6 +608,42 @@ PRESETS: tuple[ModelPreset, ...] = (
         ),
         needs_pre_cache=True,
     ),
+    ModelPreset(
+        id="flux2-dev-lora",
+        model_family="FLUX.2",
+        training_type="LoRA",
+        display_name="FLUX.2-dev · LoRA",
+        trainer_factory=_build_flux2_dev_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_FLUX2_DEV_DIT_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_FLUX2_DEV_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights (.safetensors) *",
+                default=_DEFAULT_FLUX2_DEV_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_FLUX2_DEV_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Mistral-3) *",
+                default=_DEFAULT_MISTRAL3_TE_PATH,
+                required=True, kind="path",
+                help="FLUX.2 uses Mistral-3 as the text encoder. Set BRACKET_MISTRAL3_TE_PATH.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/flux_2_train_network.py` with `--model_version dev`. "
+            "Full FLUX.2 (~32B) — distinct from the distilled Flux-2-Klein 9B preset "
+            "above. Mistral-3 text encoder, fp8 base + scaled pinned on. Pre-cache "
+            "runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
     # ─────────────────────────── Flux.1 ───────────────────────────
     ModelPreset(
         id="flux1-lora",
@@ -679,7 +773,13 @@ PRESETS: tuple[ModelPreset, ...] = (
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,
         ),
-        notes="Wraps `musubi-tuner/qwen_image_train_network.py`. Pre-cache runs automatically.",
+        notes=(
+            "Wraps `musubi-tuner/qwen_image_train_network.py` "
+            "(`--model_version original`, the default). Pre-cache runs "
+            "automatically. The newer **Qwen-Image-2512** base checkpoint is a "
+            "drop-in: point the DiT path at the 2512 weights — same architecture, "
+            "no flag changes."
+        ),
         needs_pre_cache=True,
     ),
     ModelPreset(
@@ -730,12 +830,51 @@ PRESETS: tuple[ModelPreset, ...] = (
                 name="text_encoder_path", label="Text encoder (Qwen2.5-VL-7B) *",
                 default=_DEFAULT_QWEN_IMAGE_TE_PATH, required=True, kind="path",
             ),
+            FieldSpec(
+                name="model_version", label="Edit version (edit / edit-2509 / edit-2511)",
+                default="edit-2509", required=False, kind="string",
+                help=(
+                    "Selects the Qwen-Image-Edit architecture via --model_version. "
+                    "`edit` = original (single control image); `edit-2509` / "
+                    "`edit-2511` = newer multi-reference checkpoints (up to 3 "
+                    "control images). Match this to your DiT weights."
+                ),
+            ),
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,
         ),
         notes=(
-            "Wraps `musubi-tuner/qwen_image_edit_train_network.py`. Dataset TOML "
-            "must declare paired source + target image directories."
+            "Wraps `musubi-tuner/qwen_image_train_network.py` with "
+            "`--model_version edit|edit-2509|edit-2511` (upstream unified the "
+            "edit path onto the plain Qwen-Image scripts). Point the Edit DiT "
+            "path at any Edit checkpoint — **Edit-2509 and Edit-2511** are "
+            "supported by setting the Edit-version selector; 2509/2511 add "
+            "multi-reference editing (up to 3 control images). Dataset TOML must "
+            "declare paired source + target image directories."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── HiDream-O1 ───────────────────────────
+    ModelPreset(
+        id="hidream-lora",
+        model_family="HiDream",
+        training_type="LoRA",
+        display_name="HiDream-O1 · LoRA",
+        trainer_factory=_build_hidream_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (.safetensors) *",
+                default=_DEFAULT_HIDREAM_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_HIDREAM_DIT_PATH to change the default.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/hidream_o1_train_network.py`. Single-file "
+            "checkpoint — only `--dit` is needed; the tokenizer / text encoder "
+            "auto-load from the official HiDream-ai HF repos. No VAE or TE path. "
+            "Pre-cache runs automatically."
         ),
         needs_pre_cache=True,
     ),
@@ -846,6 +985,47 @@ PRESETS: tuple[ModelPreset, ...] = (
         notes="Wraps `musubi-tuner/hv_train.py`. 13B + video — heavy blocks_to_swap below 80 GB.",
         needs_pre_cache=True,
     ),
+    # ─────────────────────────── HunyuanVideo 1.5 ───────────────────────────
+    ModelPreset(
+        id="hunyuan-video-15-lora",
+        model_family="HunyuanVideo 1.5",
+        training_type="LoRA",
+        display_name="HunyuanVideo 1.5 · LoRA",
+        trainer_factory=_build_hunyuan_video_15_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_15_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_HUNYUAN_VIDEO_15_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_HUNYUAN_VIDEO_15_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_HUNYUAN_VIDEO_15_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen2.5-VL) *",
+                default=_DEFAULT_HUNYUAN_VIDEO_15_QWEN_TE_PATH, required=True, kind="path",
+                help="HunyuanVideo 1.5 uses Qwen2.5-VL as TE. Set BRACKET_HUNYUAN_VIDEO_15_QWEN_TE_PATH.",
+            ),
+            FieldSpec(
+                name="byt5_path", label="ByT5 glyph encoder *",
+                default=_DEFAULT_HUNYUAN_VIDEO_15_BYT5_PATH, required=True, kind="path",
+                help="Set BRACKET_HUNYUAN_VIDEO_15_BYT5_PATH to change the default.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/hv_1_5_train_network.py` (`--task t2v`). Next-gen "
+            "Tencent video DiT — Qwen2.5-VL TE + ByT5 glyph encoder (distinct from "
+            "the dual-TE HunyuanVideo 1.0). Trains at 720p / 121 frames. Video "
+            "samples (.mp4); bracket extracts frames before VLM judging. Pre-cache "
+            "runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
     # ─────────────────────────── Wan ───────────────────────────
     ModelPreset(
         id="wan22-lora",
@@ -878,7 +1058,15 @@ PRESETS: tuple[ModelPreset, ...] = (
             _MUSUBI_DIR_FIELD,
             _VENV_PYTHON_FIELD,
         ),
-        notes="Wraps `musubi-tuner/wan_train_network.py`. UMT5-XXL TE. Video samples.",
+        notes=(
+            "Wraps `musubi-tuner/wan_train_network.py`. UMT5-XXL TE. Video "
+            "samples. Wan 2.2 support in musubi-tuner is the **14B MoE** "
+            "(`--task t2v-A14B` / `i2v-A14B`, dual high/low-noise DiT). The "
+            "smaller **TI2V-5B** single model is NOT yet trainable: upstream "
+            "lists `ti2v-5B` only in the size table — it has no entry in "
+            "`WAN_CONFIGS`, so `wan_train_network.py --task ti2v-5B` is rejected. "
+            "Use the A14B tasks until upstream wires up the 5B config."
+        ),
         needs_pre_cache=True,
     ),
     ModelPreset(
@@ -973,6 +1161,45 @@ PRESETS: tuple[ModelPreset, ...] = (
         ),
         needs_pre_cache=True,
     ),
+    # ─────────────────────────── Kandinsky 5 ───────────────────────────
+    ModelPreset(
+        id="kandinsky5-lora",
+        model_family="Kandinsky 5",
+        training_type="LoRA",
+        display_name="Kandinsky 5 · LoRA",
+        trainer_factory=_build_kandinsky5_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights *",
+                default=_DEFAULT_KANDINSKY5_DIT_PATH, required=True, kind="path",
+                help="Set BRACKET_KANDINSKY5_DIT_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE weights *",
+                default=_DEFAULT_KANDINSKY5_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Set BRACKET_KANDINSKY5_VAE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_qwen_path", label="Text encoder (Qwen2.5-VL) *",
+                default=_DEFAULT_KANDINSKY5_QWEN_TE_PATH, required=True, kind="path",
+                help="Set BRACKET_KANDINSKY5_QWEN_TE_PATH to change the default.",
+            ),
+            FieldSpec(
+                name="text_encoder_clip_path", label="Text encoder (CLIP-L) *",
+                default=_DEFAULT_KANDINSKY5_CLIP_TE_PATH, required=True, kind="path",
+                help="Set BRACKET_KANDINSKY5_CLIP_TE_PATH to change the default.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/kandinsky5_train_network.py`. Sber's flow-matching "
+            "model with dual text encoders (Qwen2.5-VL + CLIP-L). The `--task` "
+            "selector is pinned to the default config. Pre-cache runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
     # ─────────────────────────── LTX-2 (native ltx-trainer) ───────────────────────────
     ModelPreset(
         id="ltx2-t2v-lora",
@@ -998,7 +1225,9 @@ PRESETS: tuple[ModelPreset, ...] = (
             "YAML-config-driven, Gemma text encoder, joint audio-video. Distinct "
             "from the musubi-tuner *LTX-Video* preset above. Preprocessing "
             "(`scripts/process_dataset.py`) runs once per session into a "
-            "deterministic cache reused by every candidate."
+            "deterministic cache reused by every candidate. The newer "
+            "**LTX-2.3** checkpoint is a drop-in: point the LTX-2 model path at "
+            "the 2.3 weights — no flag changes."
         ),
         needs_pre_cache=True,
     ),
@@ -1025,7 +1254,9 @@ PRESETS: tuple[ModelPreset, ...] = (
             "Image-to-video variant of the native LTX-2 `ltx-trainer`. Adds a "
             "`first_frame` condition to the flexible training strategy. "
             "YAML-config-driven, Gemma text encoder, joint audio-video. "
-            "Preprocessing runs once per session into a deterministic cache."
+            "Preprocessing runs once per session into a deterministic cache. The "
+            "newer **LTX-2.3** checkpoint is a drop-in: point the LTX-2 model "
+            "path at the 2.3 weights — no flag changes."
         ),
         needs_pre_cache=True,
     ),
