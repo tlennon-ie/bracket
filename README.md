@@ -41,6 +41,8 @@ It drives the trainers you already use through real `accelerate launch` subproce
 | HiDream-O1 · LoRA | musubi-tuner backend (requires updated musubi-tuner). Single-file checkpoint; tokenizer/TE auto-load from HF. |
 | HunyuanVideo 1.5 · LoRA | musubi-tuner backend (requires updated musubi-tuner). Qwen2.5-VL TE + ByT5 glyph encoder; T2V. |
 | Kandinsky 5 · LoRA | musubi-tuner backend (requires updated musubi-tuner). Dual TE (Qwen2.5-VL + CLIP-L). |
+| Ideogram 4 · LoRA | musubi-tuner backend. Text-to-image; FP8-only DiT, Flux2 VAE + Qwen3-VL-8B TE. Experimental upstream. |
+| Krea 2 · LoRA | musubi-tuner backend. Text-to-image MMDiT; train on RAW, infer on Turbo. Reuses Qwen-Image VAE + Qwen3-VL-4B TE. |
 | LTX-2 · T2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video). |
 | LTX-2 · I2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video). |
 

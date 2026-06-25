@@ -141,6 +141,13 @@ _DEFAULT_KANDINSKY5_DIT_PATH = _env_or_default("BRACKET_KANDINSKY5_DIT_PATH", ""
 _DEFAULT_KANDINSKY5_VAE_PATH = _env_or_default("BRACKET_KANDINSKY5_VAE_PATH", "")
 _DEFAULT_KANDINSKY5_QWEN_TE_PATH = _env_or_default("BRACKET_KANDINSKY5_QWEN_TE_PATH", "")
 _DEFAULT_KANDINSKY5_CLIP_TE_PATH = _env_or_default("BRACKET_KANDINSKY5_CLIP_TE_PATH", "")
+# Ideogram 4 — Flux2 KL-VAE + Qwen3-VL-8B TE (image, text-to-image; FP8-only DiT)
+_DEFAULT_IDEOGRAM4_DIT_PATH = _env_or_default("BRACKET_IDEOGRAM4_DIT_PATH", "")
+_DEFAULT_IDEOGRAM4_VAE_PATH = _env_or_default("BRACKET_IDEOGRAM4_VAE_PATH", "")
+_DEFAULT_IDEOGRAM4_TE_PATH = _env_or_default("BRACKET_IDEOGRAM4_TE_PATH", "")
+# Krea 2 — Qwen-Image VAE (reusable) + Qwen3-VL-4B TE (image, text-to-image)
+_DEFAULT_KREA2_DIT_PATH = _env_or_default("BRACKET_KREA2_DIT_PATH", "")
+_DEFAULT_KREA2_TE_PATH = _env_or_default("BRACKET_KREA2_TE_PATH", "")
 
 
 def _ltx2_trainer_dir_default() -> str:
@@ -448,6 +455,26 @@ def _build_kandinsky5_lora(**kw: Any) -> Trainer:
         dit_path=kw["dit_path"], vae_path=kw["vae_path"],
         text_encoder_qwen_path=kw["text_encoder_qwen_path"],
         text_encoder_clip_path=kw["text_encoder_clip_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_ideogram4_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.ideogram4_lora import Ideogram4LoRATrainer
+    return Ideogram4LoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
+def _build_krea2_lora(**kw: Any) -> Trainer:
+    from bracket.trainer.krea2_lora import Krea2LoRATrainer
+    return Krea2LoRATrainer(
+        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
+        text_encoder_path=kw["text_encoder_path"],
         vram_gb=kw.get("vram_gb"),
     )
 
@@ -1173,6 +1200,75 @@ PRESETS: tuple[ModelPreset, ...] = (
             "Wraps `musubi-tuner/kandinsky5_train_network.py`. Sber's flow-matching "
             "model with dual text encoders (Qwen2.5-VL + CLIP-L). The `--task` "
             "selector is pinned to the default config. Pre-cache runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── Ideogram 4 ───────────────────────────
+    ModelPreset(
+        id="ideogram4-lora",
+        model_family="Ideogram 4",
+        training_type="LoRA",
+        display_name="Ideogram 4 · LoRA",
+        trainer_factory=_build_ideogram4_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (FP8) *",
+                default=_DEFAULT_IDEOGRAM4_DIT_PATH, required=True, kind="path",
+                help="ideogram4_fp8_scaled.safetensors. Set BRACKET_IDEOGRAM4_DIT_PATH.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE (Flux2 KL-VAE) *",
+                default=_DEFAULT_IDEOGRAM4_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="The Flux2 VAE. Set BRACKET_IDEOGRAM4_VAE_PATH.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen3-VL-8B) *",
+                default=_DEFAULT_IDEOGRAM4_TE_PATH, required=True, kind="path",
+                help="Set BRACKET_IDEOGRAM4_TE_PATH.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/ideogram4_train_network.py` "
+            "(`networks.lora_ideogram4`). Text-to-image; FP8-only DiT (dequantized "
+            "to bf16 compute). Flux2 VAE + Qwen3-VL-8B TE. Experimental upstream. "
+            "Pre-cache runs automatically."
+        ),
+        needs_pre_cache=True,
+    ),
+    # ─────────────────────────── Krea 2 ───────────────────────────
+    ModelPreset(
+        id="krea2-lora",
+        model_family="Krea 2",
+        training_type="LoRA",
+        display_name="Krea 2 · LoRA",
+        trainer_factory=_build_krea2_lora,
+        fields=(
+            FieldSpec(
+                name="dit_path", label="DiT weights (RAW model) *",
+                default=_DEFAULT_KREA2_DIT_PATH, required=True, kind="path",
+                help="Train on the Krea 2 RAW checkpoint. Set BRACKET_KREA2_DIT_PATH.",
+            ),
+            FieldSpec(
+                name="vae_path", label="VAE (Qwen-Image VAE) *",
+                default=_DEFAULT_QWEN_IMAGE_VAE_PATH or _DEFAULT_VAE_PATH,
+                required=True, kind="path",
+                help="Same Qwen-Image VAE as the Qwen-Image presets. Set BRACKET_QWEN_IMAGE_VAE_PATH.",
+            ),
+            FieldSpec(
+                name="text_encoder_path", label="Text encoder (Qwen3-VL-4B) *",
+                default=_DEFAULT_KREA2_TE_PATH, required=True, kind="path",
+                help="Set BRACKET_KREA2_TE_PATH.",
+            ),
+            _MUSUBI_DIR_FIELD,
+            _VENV_PYTHON_FIELD,
+        ),
+        notes=(
+            "Wraps `musubi-tuner/krea2_train_network.py` (`networks.lora_krea2`). "
+            "Text-to-image MMDiT; train on the RAW model, infer on Turbo. Reuses the "
+            "Qwen-Image VAE + Qwen3-VL-4B TE. Pre-cache runs automatically."
         ),
         needs_pre_cache=True,
     ),
