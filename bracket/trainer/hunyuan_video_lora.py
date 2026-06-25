@@ -6,8 +6,12 @@ clips; bracket extracts representative frames before VLM judging.
 
 Module names (musubi-tuner upstream):
   train:      musubi_tuner.hv_train_network
-  cache lat:  musubi_tuner.hv_cache_latents
-  cache TE:   musubi_tuner.hv_cache_text_encoder_outputs
+  cache lat:  musubi_tuner.cache_latents
+  cache TE:   musubi_tuner.cache_text_encoder_outputs
+
+HunyuanVideo 1.0 uses the GENERIC cache scripts (cache_latents.py /
+cache_text_encoder_outputs.py) — there are no hv_cache_* modules. The TE
+caching passes the dual text encoders via --text_encoder1 / --text_encoder2.
 
 HunyuanVideo uses two text encoders:
   - text_encoder1 = LLaMA3 (or compatible Llava-style)
@@ -184,8 +188,8 @@ class HunyuanVideoLoRATrainer(Trainer):
         return _hv_pre_cache_commands(
             musubi_dir=self.musubi_dir, venv_python=self.venv_python,
             run_dir=run_dir, dataset_toml=dataset_toml,
-            cache_latents_module="musubi_tuner.hv_cache_latents",
-            cache_te_module="musubi_tuner.hv_cache_text_encoder_outputs",
+            cache_latents_module="musubi_tuner.cache_latents",
+            cache_te_module="musubi_tuner.cache_text_encoder_outputs",
             vae_path=self.vae_path,
             text_encoder1_path=self.text_encoder1_path,
             text_encoder2_path=self.text_encoder2_path,

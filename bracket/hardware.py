@@ -188,7 +188,6 @@ MODEL_PARAMS_B: dict[str, float] = {
     "hunyuan-video": 13.0,  # HunyuanVideo 13B DiT
     "wan21":        14.0,   # Wan 2.1 14B (1.3B variant exists too)
     "wan22":        14.0,
-    "ltx-video":     2.0,   # LTX-Video small DiT (~2B)
     "framepack":    13.0,   # FramePack uses HunyuanVideo backbone
 }
 

@@ -123,9 +123,6 @@ _DEFAULT_FRAMEPACK_DIT_PATH = _env_or_default("BRACKET_FRAMEPACK_DIT_PATH", "")
 _DEFAULT_WAN_DIT_PATH = _env_or_default("BRACKET_WAN_DIT_PATH", "")
 _DEFAULT_WAN_VAE_PATH = _env_or_default("BRACKET_WAN_VAE_PATH", "")
 _DEFAULT_UMT5_PATH = _env_or_default("BRACKET_UMT5_PATH", "")
-# LTX-Video
-_DEFAULT_LTX_VIDEO_DIT_PATH = _env_or_default("BRACKET_LTX_VIDEO_DIT_PATH", "")
-_DEFAULT_LTX_VIDEO_VAE_PATH = _env_or_default("BRACKET_LTX_VIDEO_VAE_PATH", "")
 # LTX-2 (Lightricks' native ltx-trainer — YAML-driven, Gemma text encoder)
 _DEFAULT_LTX2_MODEL_PATH = _env_or_default("BRACKET_LTX2_MODEL_PATH", "")
 _DEFAULT_LTX2_TEXT_ENCODER_PATH = _env_or_default("BRACKET_LTX2_TEXT_ENCODER_PATH", "")
@@ -250,7 +247,7 @@ def _build_flux2_klein_lora(**kw: Any) -> Trainer:
 def _build_flux1_lora(**kw: Any) -> Trainer:
     from bracket.trainer.flux1_lora import Flux1LoRATrainer
     return Flux1LoRATrainer(
-        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        sd_scripts_dir=kw["sd_scripts_dir"], venv_python=kw["venv_python"],
         dit_path=kw["dit_path"], vae_path=kw["vae_path"],
         t5xxl_path=kw["t5xxl_path"], clip_l_path=kw["clip_l_path"],
         vram_gb=kw.get("vram_gb"),
@@ -260,7 +257,7 @@ def _build_flux1_lora(**kw: Any) -> Trainer:
 def _build_flux1_full(**kw: Any) -> Trainer:
     from bracket.trainer.flux1_full import Flux1FullTrainer
     return Flux1FullTrainer(
-        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
+        sd_scripts_dir=kw["sd_scripts_dir"], venv_python=kw["venv_python"],
         dit_path=kw["dit_path"], vae_path=kw["vae_path"],
         t5xxl_path=kw["t5xxl_path"], clip_l_path=kw["clip_l_path"],
         vram_gb=kw.get("vram_gb"),
@@ -361,28 +358,6 @@ def _build_wan_lora(**kw: Any) -> Trainer:
     )
 
 
-def _build_wan_full(**kw: Any) -> Trainer:
-    from bracket.trainer.wan_full import WanFullTrainer
-    return WanFullTrainer(
-        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
-        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
-        text_encoder_path=kw["text_encoder_path"],
-        wan_version=kw.get("wan_version", "2.2"),
-        task=kw.get("task", "t2v-14B"),
-        vram_gb=kw.get("vram_gb"),
-    )
-
-
-def _build_ltx_video_lora(**kw: Any) -> Trainer:
-    from bracket.trainer.ltx_video_lora import LTXVideoLoRATrainer
-    return LTXVideoLoRATrainer(
-        musubi_dir=kw["musubi_dir"], venv_python=kw["venv_python"],
-        dit_path=kw["dit_path"], vae_path=kw["vae_path"],
-        text_encoder_path=kw["text_encoder_path"],
-        vram_gb=kw.get("vram_gb"),
-    )
-
-
 def _build_ltx2_t2v_lora(**kw: Any) -> Trainer:
     from bracket.trainer.ltx2_lora import LTX2LoRATrainer
     return LTX2LoRATrainer(
@@ -466,7 +441,7 @@ _SDXL_PRETRAINED_FIELD = FieldSpec(
 _SD_SCRIPTS_FIELD = FieldSpec(
     name="sd_scripts_dir", label="sd-scripts directory *",
     default=_DEFAULT_SD_SCRIPTS, required=True, kind="dir",
-    help="Path to the sd-scripts (Kohya) checkout. Bundled inside musubi-tuner.",
+    help="Path to the sd-scripts (Kohya) checkout. Vendored at vendor/sd-scripts; set BRACKET_SD_SCRIPTS_DIR to override.",
 )
 
 _MUSUBI_DIR_FIELD = FieldSpec(
@@ -673,11 +648,15 @@ PRESETS: tuple[ModelPreset, ...] = (
                 default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
                 help="Set BRACKET_CLIP_L_PATH to change the default.",
             ),
-            _MUSUBI_DIR_FIELD,
+            _SD_SCRIPTS_FIELD,
             _VENV_PYTHON_FIELD,
         ),
-        notes="Wraps `musubi-tuner/flux_train_network.py`. Dual TE (T5-XXL + CLIP-L). Pre-cache runs automatically.",
-        needs_pre_cache=True,
+        notes=(
+            "Wraps `sd-scripts/flux_train_network.py`. Dual TE (T5-XXL + CLIP-L) "
+            "+ AutoEncoder (`--ae`). Caches latents + TE outputs inline inside the "
+            "trainer — no manual pre-cache step."
+        ),
+        needs_pre_cache=False,
     ),
     ModelPreset(
         id="flux1-full",
@@ -704,11 +683,15 @@ PRESETS: tuple[ModelPreset, ...] = (
                 name="clip_l_path", label="CLIP-L text encoder *",
                 default=_DEFAULT_CLIP_L_PATH, required=True, kind="path",
             ),
-            _MUSUBI_DIR_FIELD,
+            _SD_SCRIPTS_FIELD,
             _VENV_PYTHON_FIELD,
         ),
-        notes="Wraps `musubi-tuner/flux_train.py`. Full FT with Adafactor + fused backward + blocks_to_swap.",
-        needs_pre_cache=True,
+        notes=(
+            "Wraps `sd-scripts/flux_train.py`. Full FT with Adafactor + fused "
+            "backward + full_bf16 + blocks_to_swap. Caches latents inline — no "
+            "manual pre-cache step."
+        ),
+        needs_pre_cache=False,
     ),
     ModelPreset(
         id="flux1-kontext-lora",
@@ -1070,36 +1053,6 @@ PRESETS: tuple[ModelPreset, ...] = (
         needs_pre_cache=True,
     ),
     ModelPreset(
-        id="wan22-full",
-        model_family="Wan 2.2",
-        training_type="Full FT",
-        display_name="Wan 2.2 · Full FT",
-        trainer_factory=lambda **kw: _build_wan_full(wan_version="2.2", **kw),
-        fields=(
-            FieldSpec(
-                name="dit_path", label="DiT weights *",
-                default=_DEFAULT_WAN_DIT_PATH, required=True, kind="path",
-            ),
-            FieldSpec(
-                name="vae_path", label="VAE weights *",
-                default=_DEFAULT_WAN_VAE_PATH or _DEFAULT_VAE_PATH,
-                required=True, kind="path",
-            ),
-            FieldSpec(
-                name="text_encoder_path", label="Text encoder (UMT5-XXL) *",
-                default=_DEFAULT_UMT5_PATH, required=True, kind="path",
-            ),
-            FieldSpec(
-                name="task", label="Task",
-                default="t2v-14B", required=False, kind="string",
-            ),
-            _MUSUBI_DIR_FIELD,
-            _VENV_PYTHON_FIELD,
-        ),
-        notes="Wraps `musubi-tuner/wan_train.py`. Adafactor + fused + heavy blocks_to_swap.",
-        needs_pre_cache=True,
-    ),
-    ModelPreset(
         id="wan21-lora",
         model_family="Wan 2.1",
         training_type="LoRA",
@@ -1127,38 +1080,6 @@ PRESETS: tuple[ModelPreset, ...] = (
             _VENV_PYTHON_FIELD,
         ),
         notes="Wraps `musubi-tuner/wan_train_network.py` against Wan 2.1 weights.",
-        needs_pre_cache=True,
-    ),
-    # ─────────────────────────── LTX-Video ───────────────────────────
-    ModelPreset(
-        id="ltx-video-lora",
-        model_family="LTX-Video",
-        training_type="LoRA",
-        display_name="LTX-Video · LoRA",
-        trainer_factory=_build_ltx_video_lora,
-        fields=(
-            FieldSpec(
-                name="dit_path", label="DiT weights *",
-                default=_DEFAULT_LTX_VIDEO_DIT_PATH, required=True, kind="path",
-                help="Set BRACKET_LTX_VIDEO_DIT_PATH to change the default.",
-            ),
-            FieldSpec(
-                name="vae_path", label="VAE weights *",
-                default=_DEFAULT_LTX_VIDEO_VAE_PATH or _DEFAULT_VAE_PATH,
-                required=True, kind="path",
-                help="Set BRACKET_LTX_VIDEO_VAE_PATH to change the default.",
-            ),
-            FieldSpec(
-                name="text_encoder_path", label="Text encoder (T5-XXL) *",
-                default=_DEFAULT_T5XXL_PATH, required=True, kind="path",
-            ),
-            _MUSUBI_DIR_FIELD,
-            _VENV_PYTHON_FIELD,
-        ),
-        notes=(
-            "Wraps `musubi-tuner/ltxv_train_network.py`. Smallest of the supported "
-            "video DiTs (~2B) — much faster per-step than Wan / Hunyuan."
-        ),
         needs_pre_cache=True,
     ),
     # ─────────────────────────── Kandinsky 5 ───────────────────────────
@@ -1222,10 +1143,9 @@ PRESETS: tuple[ModelPreset, ...] = (
         ),
         notes=(
             "Drives Lightricks' **native** `ltx-trainer` (`scripts/train.py`) — "
-            "YAML-config-driven, Gemma text encoder, joint audio-video. Distinct "
-            "from the musubi-tuner *LTX-Video* preset above. Preprocessing "
-            "(`scripts/process_dataset.py`) runs once per session into a "
-            "deterministic cache reused by every candidate. The newer "
+            "YAML-config-driven, Gemma text encoder, joint audio-video. "
+            "Preprocessing (`scripts/process_dataset.py`) runs once per session "
+            "into a deterministic cache reused by every candidate. The newer "
             "**LTX-2.3** checkpoint is a drop-in: point the LTX-2 model path at "
             "the 2.3 weights — no flag changes."
         ),

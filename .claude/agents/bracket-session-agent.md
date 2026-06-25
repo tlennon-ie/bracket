@@ -53,10 +53,10 @@ and surface the live state of the session so they can intervene.
 Ask the user (use `AskUserQuestion`):
 - **Family**: SDXL / Z-Image / Flux.1 / Flux.1-Kontext / Flux-2-Klein /
   Qwen-Image / Qwen-Image-Edit / SD3.5 / HunyuanVideo / Wan 2.2 /
-  Wan 2.1 / LTX-Video / FramePack
+  Wan 2.1 / LTX-2 / FramePack
 - **Mode**: LoRA / Full FT
   - Filter the Mode question by what the family supports (Kontext,
-    Flux-2-Klein, Qwen-Image-Edit, LTX-Video, FramePack are LoRA-only).
+    Flux-2-Klein, Qwen-Image-Edit, Wan, LTX-2, FramePack are LoRA-only).
 
 Then `curl -s http://127.0.0.1:8000/api/presets/<family>/<type>` to
 get the canonical preset spec — that's the source of truth for which

@@ -1,12 +1,24 @@
-"""Flux.1 LoRA trainer adapter — wraps musubi-tuner flux_train_network.
+"""Flux.1 LoRA trainer adapter — wraps sd-scripts/flux_train_network.py.
 
-Flux.1 is the original dev/schnell DiT (~12B). It uses dual text encoders:
-T5-XXL + CLIP-L. The musubi adapter follows the standard pattern.
+FLUX.1 (dev/schnell) training lives in **sd-scripts**, not musubi-tuner.
+It uses a Transformer-based DiT (~12B) with dual text encoders (T5-XXL +
+CLIP-L) and a dedicated AutoEncoder (passed as ``--ae``, not ``--vae``).
 
-Module names (musubi-tuner upstream):
-  train:      musubi_tuner.flux_train_network
-  cache lat:  musubi_tuner.flux_cache_latents
-  cache TE:   musubi_tuner.flux_cache_text_encoder_outputs
+Mirrors the sd-scripts pattern used by :mod:`bracket.trainer.sdxl`:
+  - constructor takes ``sd_scripts_dir`` (not ``musubi_dir``)
+  - the sd-scripts launcher prefix (``make_accelerate_launch_prefix``)
+  - sd-scripts dataset TOML via ``derive_run_toml(target_format="sd-scripts")``
+  - INLINE latent + TE caching (``--cache_latents --cache_latents_to_disk``)
+    — there is NO separate pre-cache step
+  - samples land in ``<output>/sample`` (singular, sd-scripts default)
+
+FLUX.1-specific flags (see sd-scripts/docs/flux_train_network.md):
+  --clip_l / --t5xxl / --ae      text encoders + autoencoder
+  --network_module networks.lora_flux
+  --guidance_scale 1.0           disables the distilled guidance for training
+  --timestep_sampling shift      with --discrete_flow_shift to control the shift
+  --model_prediction_type raw    recommended for FLUX.1
+  --network_train_unet_only      TE outputs are cached & frozen
 """
 
 from __future__ import annotations
@@ -17,7 +29,7 @@ from typing import Any, Mapping, Optional
 
 from bracket.dataset.runtime import derive_run_toml
 from bracket.hardware import (
-    BLOCKS_TO_SWAP_BY_TIER, MUSUBI_DATALOADER_WORKERS_BY_TIER,
+    BLOCKS_TO_SWAP_BY_TIER, DATALOADER_WORKERS_BY_TIER,
     SDXL_LORA_BATCH_CHOICES_BY_TIER, SDXL_LORA_DEFAULT_BATCH_BY_TIER,
     detect_gpu, lora_grad_ckpt_baseline, lora_grad_ckpt_varies, vram_tier,
 )
@@ -39,24 +51,24 @@ class Flux1LoRAConfig(TrainerConfig):
     network_dim: int = 32
     network_alpha: float = 16.0
     discrete_flow_shift: float = 3.0
+    guidance_scale: float = 1.0
     train_batch_size: int = 1
     gradient_accumulation_steps: int = 1
     mixed_precision: str = "bf16"
     max_grad_norm: float = 1.0
     fp8_base: bool = True
-    fp8_scaled: bool = False
     gradient_checkpointing: bool = True
     blocks_to_swap: int = 0
     dataloader_workers: int = 2
 
 
 class Flux1LoRATrainer(Trainer):
-    name = "flux1-lora-musubi"
+    name = "flux1-lora-sd-scripts"
 
     def __init__(
         self,
         *,
-        musubi_dir: Path,
+        sd_scripts_dir: Path,
         venv_python: Path,
         dit_path: str,
         vae_path: str,
@@ -64,18 +76,15 @@ class Flux1LoRATrainer(Trainer):
         clip_l_path: str,
         vram_gb: Optional[float] = None,
     ) -> None:
-        self.musubi_dir = Path(musubi_dir).resolve()
+        self.sd_scripts_dir = Path(sd_scripts_dir).resolve()
         self.venv_python = Path(venv_python).resolve()
         self.dit_path = dit_path
         self.vae_path = vae_path
         self.t5xxl_path = t5xxl_path
         self.clip_l_path = clip_l_path
-        self.train_script = self.musubi_dir / "src" / "musubi_tuner" / "flux_train_network.py"
-        if not self.train_script.exists():
-            self.train_script = self.musubi_dir / "flux_train_network.py"
-        if not self.train_script.exists():
+        if not (self.sd_scripts_dir / "flux_train_network.py").exists():
             raise FileNotFoundError(
-                f"flux_train_network.py not found under {self.musubi_dir}"
+                f"flux_train_network.py not found in {self.sd_scripts_dir}"
             )
         if not self.venv_python.exists():
             raise FileNotFoundError(f"venv python not found: {self.venv_python}")
@@ -108,12 +117,13 @@ class Flux1LoRATrainer(Trainer):
                     choices=SDXL_LORA_BATCH_CHOICES_BY_TIER[self.tier],
                 ),
                 "gradient_checkpointing": ckpt_knob,
-                "dataloader_workers": FixedKnob(value=MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]),
+                # Pinned.
+                "dataloader_workers": FixedKnob(value=DATALOADER_WORKERS_BY_TIER[self.tier]),
                 "gradient_accumulation_steps": FixedKnob(value=1),
                 "mixed_precision": FixedKnob(value="bf16"),
                 "max_grad_norm": FixedKnob(value=1.0),
+                "guidance_scale": FixedKnob(value=1.0),
                 "fp8_base": FixedKnob(value=True),
-                "fp8_scaled": FixedKnob(value=False),
                 "blocks_to_swap": FixedKnob(value=BLOCKS_TO_SWAP_BY_TIER[self.tier]),
             },
         )
@@ -122,14 +132,14 @@ class Flux1LoRATrainer(Trainer):
         return Flux1LoRAConfig(
             train_batch_size=SDXL_LORA_DEFAULT_BATCH_BY_TIER[self.tier],
             gradient_checkpointing=lora_grad_ckpt_baseline(self.tier, "flux1"),
-            dataloader_workers=MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier],
+            dataloader_workers=DATALOADER_WORKERS_BY_TIER[self.tier],
             blocks_to_swap=BLOCKS_TO_SWAP_BY_TIER[self.tier],
         )
 
     def curated_configs(self) -> list[TrainerConfig]:
         bs = SDXL_LORA_DEFAULT_BATCH_BY_TIER[self.tier]
         ckpt = lora_grad_ckpt_baseline(self.tier, "flux1")
-        workers = MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]
+        workers = DATALOADER_WORKERS_BY_TIER[self.tier]
         swap = BLOCKS_TO_SWAP_BY_TIER[self.tier]
         return [
             # 1) ostris/Civitai-style starter — 5e-5 + flow_shift=3.
@@ -170,28 +180,15 @@ class Flux1LoRATrainer(Trainer):
             network_dim=int(knobs["network_dim"]),
             network_alpha=float(knobs["network_alpha"]),
             discrete_flow_shift=float(knobs["discrete_flow_shift"]),
+            guidance_scale=float(knobs["guidance_scale"]),
             train_batch_size=int(knobs["train_batch_size"]),
             gradient_accumulation_steps=int(knobs["gradient_accumulation_steps"]),
             mixed_precision=str(knobs["mixed_precision"]),
             max_grad_norm=float(knobs["max_grad_norm"]),
             fp8_base=bool(knobs["fp8_base"]),
-            fp8_scaled=bool(knobs["fp8_scaled"]),
             gradient_checkpointing=bool(knobs["gradient_checkpointing"]),
             blocks_to_swap=int(knobs["blocks_to_swap"]),
             dataloader_workers=int(knobs["dataloader_workers"]),
-        )
-
-    def session_setup_commands(self, *, dataset_toml: Path, run_dir: Path) -> list[LaunchSpec]:
-        return _flux1_pre_cache_commands(
-            musubi_dir=self.musubi_dir,
-            venv_python=self.venv_python,
-            run_dir=run_dir,
-            dataset_toml=dataset_toml,
-            cache_latents_module="musubi_tuner.flux_cache_latents",
-            cache_te_module="musubi_tuner.flux_cache_text_encoder_outputs",
-            vae_path=self.vae_path,
-            t5xxl_path=self.t5xxl_path,
-            clip_l_path=self.clip_l_path,
         )
 
     def prepare_run(
@@ -213,6 +210,7 @@ class Flux1LoRATrainer(Trainer):
         run_dir = Path(run_dir).resolve()
         output_dir = run_dir / "output"
         logging_dir = run_dir / "logs"
+        # sd-scripts writes samples to <output_dir>/sample (singular).
         sample_dir = output_dir / "sample"
         for d in (output_dir, logging_dir, sample_dir):
             d.mkdir(parents=True, exist_ok=True)
@@ -221,16 +219,16 @@ class Flux1LoRATrainer(Trainer):
             source_toml=dataset_toml,
             target_path=run_dir / "dataset.toml",
             batch_size=config.train_batch_size,
-            target_format="musubi",
+            target_format="sd-scripts",
         )
 
         cmd: list[str] = [
             *make_accelerate_launch_prefix(self.venv_python, mixed_precision=config.mixed_precision),
-            str(self.train_script),
-            "--dit", self.dit_path,
-            "--ae", self.vae_path,
-            "--t5xxl", self.t5xxl_path,
+            "flux_train_network.py",
+            "--pretrained_model_name_or_path", self.dit_path,
             "--clip_l", self.clip_l_path,
+            "--t5xxl", self.t5xxl_path,
+            "--ae", self.vae_path,
             "--dataset_config", str(run_toml),
             "--output_dir", str(output_dir),
             "--output_name", "candidate",
@@ -244,26 +242,39 @@ class Flux1LoRATrainer(Trainer):
             "--optimizer_type", config.optimizer_type,
             "--lr_scheduler", config.lr_scheduler,
             "--lr_warmup_steps", str(config.lr_warmup_steps),
+            "--train_batch_size", str(config.train_batch_size),
             "--gradient_accumulation_steps", str(config.gradient_accumulation_steps),
             "--mixed_precision", config.mixed_precision,
             "--max_grad_norm", str(config.max_grad_norm),
             "--max_train_steps", str(max_steps),
             "--seed", str(seed),
-            "--sdpa",
+            # FLUX.1-specific training parameters.
+            "--guidance_scale", f"{config.guidance_scale:.4g}",
             "--timestep_sampling", "shift",
-            "--weighting_scheme", "none",
             "--discrete_flow_shift", f"{config.discrete_flow_shift:.4f}",
+            "--model_prediction_type", "raw",
+            # Inline caching — TE outputs are frozen, so train the DiT only.
+            "--cache_latents",
+            "--cache_latents_to_disk",
+            "--cache_text_encoder_outputs",
+            "--cache_text_encoder_outputs_to_disk",
+            "--network_train_unet_only",
+            "--sdpa",
+            "--save_precision", "bf16",
+            "--save_model_as", "safetensors",
+            "--no_metadata",
+            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
             "--max_data_loader_n_workers", str(config.dataloader_workers),
             "--persistent_data_loader_workers",
-            "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
-            "--no_metadata",
         ]
+        # Skip the per-image latent integrity check when already cached.
+        from bracket.dataset.latent_cache import dataset_has_cached_latents
+        if dataset_has_cached_latents(dataset_toml):
+            cmd.append("--skip_cache_check")
         if config.gradient_checkpointing:
             cmd.append("--gradient_checkpointing")
         if config.fp8_base:
             cmd.append("--fp8_base")
-        if config.fp8_scaled:
-            cmd.append("--fp8_scaled")
         if config.blocks_to_swap > 0:
             cmd += ["--blocks_to_swap", str(config.blocks_to_swap)]
         if sample_prompts is not None and sample_every_n_steps:
@@ -277,55 +288,8 @@ class Flux1LoRATrainer(Trainer):
             cmd += ["--resume", str(resume_from)]
 
         return LaunchSpec(
-            cmd=cmd, cwd=self.musubi_dir, env=make_subprocess_env(),
+            cmd=cmd, cwd=self.sd_scripts_dir, env=make_subprocess_env(),
             output_dir=output_dir, logging_dir=logging_dir,
             tfevents_glob=str(logging_dir / "**" / "events.out.tfevents.*"),
             sample_dir=sample_dir,
         )
-
-
-def _flux1_pre_cache_commands(
-    *,
-    musubi_dir: Path,
-    venv_python: Path,
-    run_dir: Path,
-    dataset_toml: Path,
-    cache_latents_module: str,
-    cache_te_module: str,
-    vae_path: str,
-    t5xxl_path: str,
-    clip_l_path: str,
-) -> list[LaunchSpec]:
-    """Flux.1 pre-cache: dual TE (T5-XXL + CLIP-L)."""
-    env = make_subprocess_env()
-    run_dir = Path(run_dir).resolve()
-    logging_dir = run_dir / "logs"
-    logging_dir.mkdir(parents=True, exist_ok=True)
-    flat_toml = derive_run_toml(
-        source_toml=dataset_toml,
-        target_path=run_dir / "dataset_flat.toml",
-        target_format="musubi",
-    )
-    return [
-        LaunchSpec(
-            cmd=[
-                str(venv_python), "-m", cache_latents_module,
-                "--dataset_config", str(flat_toml),
-                "--vae", vae_path,
-            ],
-            cwd=musubi_dir, env=env,
-            output_dir=run_dir, logging_dir=logging_dir,
-            tfevents_glob="",
-        ),
-        LaunchSpec(
-            cmd=[
-                str(venv_python), "-m", cache_te_module,
-                "--dataset_config", str(flat_toml),
-                "--t5xxl", t5xxl_path,
-                "--clip_l", clip_l_path,
-            ],
-            cwd=musubi_dir, env=env,
-            output_dir=run_dir, logging_dir=logging_dir,
-            tfevents_glob="",
-        ),
-    ]

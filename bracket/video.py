@@ -1,6 +1,6 @@
 """Video sample helpers.
 
-Video trainers (HunyuanVideo, Wan 2.1/2.2, LTX-Video, FramePack) emit `.mp4`
+Video trainers (HunyuanVideo, Wan 2.1/2.2, LTX-2, FramePack) emit `.mp4`
 samples instead of `.png`. Bracket's existing scorer + judge expect images, so
 we extract a small handful of representative frames per video and let the
 existing image-judge score them.

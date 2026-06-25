@@ -23,10 +23,10 @@ When the user says "run a Bracket session", DON'T dump the full
 required-inputs list in one wall of text. Walk them through it:
 
 1. **Confirm a trainer family** first. Ask which model (SDXL, Z-Image,
-   Flux.1, Flux-2-Klein, Qwen-Image, SD3.5, HunyuanVideo, Wan, LTX,
+   Flux.1, Flux-2-Klein, Qwen-Image, SD3.5, HunyuanVideo, Wan, LTX-2,
    FramePack), then LoRA vs Full FT. Many families don't have a
-   Full-FT preset (Flux-2-Klein, Flux.1-Kontext, Qwen-Image-Edit,
-   LTX-Video, FramePack) — if they pick those, the answer is LoRA
+   Full-FT preset (Flux-2-Klein, Flux.1-Kontext, Qwen-Image-Edit, Wan,
+   LTX-2, FramePack) — if they pick those, the answer is LoRA
    only.
 
 2. **Confirm weights are downloaded.** Ask for the path(s) the trainer
@@ -42,7 +42,7 @@ required-inputs list in one wall of text. Walk them through it:
    | SD3.5 | base file (MMDiT + T5 + CLIPs bundle) |
    | HunyuanVideo / FramePack | DiT, VAE, LLaMA3, CLIP-L |
    | Wan 2.1 / 2.2 | DiT, VAE, UMT5-XXL |
-   | LTX-Video | DiT, VAE, T5-XXL |
+   | LTX-2 | model path, Gemma TE (native ltx-trainer) |
 
    Check `.env` first — many users have these set as `BRACKET_*_PATH`
    env vars. If found, just confirm; don't re-ask.
@@ -82,7 +82,7 @@ fenced block and ask for one final "OK to start?".
    `flux1-kontext-lora`, `qwen-image-lora`, `qwen-image-full`,
    `qwen-image-edit-lora`, `sd35-lora`, `sd35-full`,
    `hunyuan-video-lora`, `hunyuan-video-full`, `wan22-lora`,
-   `wan22-full`, `wan21-lora`, `ltx-video-lora`, `framepack-lora`.
+   `wan21-lora`, `ltx2-t2v-lora`, `ltx2-i2v-lora`, `framepack-lora`.
 2. **Base model weights** — depends on family (table above).
 3. **Dataset TOML** — sd-scripts / musubi-tuner format. See
    `bracket-dataset-toml` skill for how to write one.

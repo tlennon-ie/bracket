@@ -65,7 +65,7 @@ installer.
 Once the UI is up:
 1. **Setup tab** should show many model families (SDXL, Z-Image,
    Flux-2-Klein, Flux.1, Flux.1-Kontext, Qwen-Image, Qwen-Image-Edit,
-   SD3.5, HunyuanVideo, Wan 2.2, Wan 2.1, LTX-Video, FramePack).
+   SD3.5, HunyuanVideo, Wan 2.2, Wan 2.1, LTX-2, FramePack).
 2. Pick any one → `LoRA` or `Full FT`. Required fields appear (`*`
    marked).
 3. Trainer-infrastructure paths (musubi-tuner directory, sd-scripts
@@ -93,7 +93,7 @@ in the UI lists the env-var name in its help text. Common ones:
 | SD3.5 | `BRACKET_SD35_PRETRAINED` (single file with MMDiT + T5 + CLIPs) |
 | HunyuanVideo / FramePack | `BRACKET_HUNYUAN_VIDEO_DIT_PATH`, `BRACKET_HUNYUAN_VIDEO_VAE_PATH`, `BRACKET_LLAMA3_PATH`, `BRACKET_CLIP_L_PATH` |
 | Wan 2.1 / 2.2 | `BRACKET_WAN_DIT_PATH`, `BRACKET_WAN_VAE_PATH`, `BRACKET_UMT5_PATH` |
-| LTX-Video | `BRACKET_LTX_VIDEO_DIT_PATH`, `BRACKET_LTX_VIDEO_VAE_PATH`, `BRACKET_T5XXL_PATH` |
+| LTX-2 | `BRACKET_LTX2_MODEL_PATH`, `BRACKET_LTX2_TEXT_ENCODER_PATH` (native ltx-trainer) |
 
 Don't bundle weights — they're 5-25 GB per family. Tell the user to
 download the ones they need from Hugging Face / the model's release

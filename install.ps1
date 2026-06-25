@@ -299,10 +299,6 @@ $lmsLine
 # BRACKET_WAN_VAE_PATH=C:\path\to\wan-vae.safetensors
 # BRACKET_UMT5_PATH=C:\path\to\umt5-xxl.safetensors
 
-# --- LTX-Video (musubi-tuner backend) ---------------------------------
-# BRACKET_LTX_VIDEO_DIT_PATH=C:\path\to\ltx-video-dit.safetensors
-# BRACKET_LTX_VIDEO_VAE_PATH=C:\path\to\ltx-video-vae.safetensors
-
 # --- LTX-2 (native Lightricks ltx-trainer; Gemma TE, single .safetensors) --
 # BRACKET_LTX2_MODEL_PATH=C:\path\to\ltx-2.safetensors
 # BRACKET_LTX2_TEXT_ENCODER_PATH=C:\path\to\gemma-text-encoder

@@ -25,9 +25,8 @@ already covers most actively-used diffusion families:
 | Qwen-Image-Edit | ✅ | — | `bracket/trainer/qwen_image_edit_lora.py` |
 | SD3.5 (Medium / Large) | ✅ | ✅ | `bracket/trainer/sd35_lora.py`, `sd35_full.py` |
 | HunyuanVideo 13B | ✅ | ✅ | `bracket/trainer/hunyuan_video_lora.py`, `hunyuan_video_full.py` |
-| Wan 2.2 | ✅ | ✅ | `bracket/trainer/wan_lora.py`, `wan_full.py` |
+| Wan 2.2 | ✅ | — | `bracket/trainer/wan_lora.py` (musubi has no Wan full-FT script) |
 | Wan 2.1 | ✅ | — | (uses `wan_lora.py` with `wan_version="2.1"`) |
-| LTX-Video | ✅ | — | `bracket/trainer/ltx_video_lora.py` |
 | FramePack | ✅ | — | `bracket/trainer/framepack_lora.py` |
 
 Confirm in [`bracket/registry.py`](../../bracket/registry.py) `PRESETS`
@@ -53,11 +52,11 @@ Pick the existing trainer most similar in shape:
 
 | Adding | Mirror this |
 |---|---|
-| sd-scripts LoRA module | `sdxl.py` |
-| sd-scripts full FT | `sdxl_full.py`, `sd35_full.py` |
-| musubi flow-matching LoRA (image) | `zimage_lora.py`, `qwen_image_lora.py`, `flux1_lora.py` |
-| musubi flow-matching full FT (image) | `zimage_full.py`, `qwen_image_full.py`, `flux1_full.py` |
-| musubi video LoRA | `wan_lora.py`, `hunyuan_video_lora.py`, `ltx_video_lora.py` |
+| sd-scripts LoRA module | `sdxl.py`, `flux1_lora.py` |
+| sd-scripts full FT | `sdxl_full.py`, `sd35_full.py`, `flux1_full.py` |
+| musubi flow-matching LoRA (image) | `zimage_lora.py`, `qwen_image_lora.py` |
+| musubi flow-matching full FT (image) | `zimage_full.py`, `qwen_image_full.py` |
+| musubi video LoRA | `wan_lora.py`, `hunyuan_video_lora.py` |
 | musubi image-edit LoRA (paired source/target) | `flux1_kontext_lora.py`, `qwen_image_edit_lora.py` |
 | Anchor-frame conditioned video LoRA | `framepack_lora.py` |
 

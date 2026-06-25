@@ -25,10 +25,12 @@ def test_list_families_includes_all_supported():
     assert families[:3] == ["SDXL", "Z-Image", "Flux-2-Klein"]
     expected_extension = {
         "Flux.1", "Flux.1-Kontext", "Qwen-Image", "Qwen-Image-Edit",
-        "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "LTX-Video", "FramePack",
+        "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "FramePack",
         "FLUX.2", "HiDream", "HunyuanVideo 1.5", "Kandinsky 5",
     }
     assert expected_extension.issubset(set(families))
+    # LTX-Video (musubi) was dropped — native LTX-2 covers it now.
+    assert "LTX-Video" not in families
 
 
 def test_training_types_for_known_families():
@@ -43,9 +45,11 @@ def test_training_types_for_known_families():
     assert training_types_for("Qwen-Image-Edit") == ["LoRA"]
     assert set(training_types_for("SD3.5")) == {"LoRA", "Full FT"}
     assert set(training_types_for("HunyuanVideo")) == {"LoRA", "Full FT"}
-    assert set(training_types_for("Wan 2.2")) == {"LoRA", "Full FT"}
+    # Wan has no full-FT script in musubi — LoRA only for both versions.
+    assert training_types_for("Wan 2.2") == ["LoRA"]
     assert training_types_for("Wan 2.1") == ["LoRA"]
-    assert training_types_for("LTX-Video") == ["LoRA"]
+    # LTX-Video (musubi) dropped — superseded by the native LTX-2 presets.
+    assert training_types_for("LTX-Video") == []
     assert training_types_for("FramePack") == ["LoRA"]
     # Newly-wired musubi families (LoRA-only)
     assert training_types_for("FLUX.2") == ["LoRA"]
@@ -121,16 +125,40 @@ def test_qwen_image_lora_preset_constructs_trainer(tmp_path):
     assert trainer.name == "qwen-image-lora-musubi"
 
 
+def _stub_sd_scripts(tmp_path, script_name: str):
+    """Create a stub sd-scripts directory with a no-op training script."""
+    sd = tmp_path / "sd-scripts"
+    sd.mkdir()
+    (sd / script_name).write_text("# placeholder\n", encoding="utf-8")
+    py = tmp_path / "python.exe"
+    py.write_bytes(b"")
+    return sd, py
+
+
 def test_flux1_lora_preset_constructs_trainer(tmp_path):
-    musubi, py = _stub_musubi(tmp_path, "flux_train_network.py")
+    sd, py = _stub_sd_scripts(tmp_path, "flux_train_network.py")
     preset = get_preset("Flux.1", "LoRA")
+    assert preset.needs_pre_cache is False
     trainer = preset.trainer_factory(
-        musubi_dir=str(musubi), venv_python=str(py),
+        sd_scripts_dir=str(sd), venv_python=str(py),
         dit_path="/x/dit", vae_path="/x/ae",
         t5xxl_path="/x/t5", clip_l_path="/x/clip",
         vram_gb=32.0,
     )
-    assert trainer.name == "flux1-lora-musubi"
+    assert trainer.name == "flux1-lora-sd-scripts"
+
+
+def test_flux1_full_preset_constructs_trainer(tmp_path):
+    sd, py = _stub_sd_scripts(tmp_path, "flux_train.py")
+    preset = get_preset("Flux.1", "Full FT")
+    assert preset.needs_pre_cache is False
+    trainer = preset.trainer_factory(
+        sd_scripts_dir=str(sd), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/ae",
+        t5xxl_path="/x/t5", clip_l_path="/x/clip",
+        vram_gb=32.0,
+    )
+    assert trainer.name == "flux1-full-sd-scripts"
 
 
 def test_hunyuan_video_lora_preset_constructs_trainer(tmp_path):
@@ -157,17 +185,6 @@ def test_wan22_lora_preset_constructs_trainer(tmp_path):
     assert trainer.wan_version == "2.2"
 
 
-def test_ltx_video_lora_preset_constructs_trainer(tmp_path):
-    musubi, py = _stub_musubi(tmp_path, "ltxv_train_network.py")
-    preset = get_preset("LTX-Video", "LoRA")
-    trainer = preset.trainer_factory(
-        musubi_dir=str(musubi), venv_python=str(py),
-        dit_path="/x/dit", vae_path="/x/vae",
-        text_encoder_path="/x/t5", vram_gb=32.0,
-    )
-    assert trainer.name == "ltx-video-lora-musubi"
-
-
 def test_framepack_lora_preset_constructs_trainer(tmp_path):
     musubi, py = _stub_musubi(tmp_path, "fpack_train_network.py")
     preset = get_preset("FramePack", "LoRA")
@@ -189,14 +206,15 @@ def _stub_ltx_trainer(tmp_path):
     return d
 
 
-def test_ltx2_presets_registered_and_distinct_from_ltx_video():
+def test_ltx2_presets_registered_and_ltx_video_removed():
     ids = [p.id for p in PRESETS]
     assert "ltx2-t2v-lora" in ids
     assert "ltx2-i2v-lora" in ids
-    # The native LTX-2 family is distinct from the musubi "LTX-Video" preset.
+    # The native LTX-2 family superseded the dropped musubi "LTX-Video" preset.
     families = list_model_families()
     assert "LTX-2" in families
-    assert "LTX-Video" in families
+    assert "LTX-Video" not in families
+    assert "ltx-video-lora" not in ids
 
 
 def test_ltx2_t2v_lora_preset_constructs_trainer(tmp_path):
