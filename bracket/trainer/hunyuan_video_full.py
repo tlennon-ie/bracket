@@ -138,8 +138,8 @@ class HunyuanVideoFullTrainer(Trainer):
         return _hv_pre_cache_commands(
             musubi_dir=self.musubi_dir, venv_python=self.venv_python,
             run_dir=run_dir, dataset_toml=dataset_toml,
-            cache_latents_module="musubi_tuner.hv_cache_latents",
-            cache_te_module="musubi_tuner.hv_cache_text_encoder_outputs",
+            cache_latents_module="musubi_tuner.cache_latents",
+            cache_te_module="musubi_tuner.cache_text_encoder_outputs",
             vae_path=self.vae_path,
             text_encoder1_path=self.text_encoder1_path,
             text_encoder2_path=self.text_encoder2_path,

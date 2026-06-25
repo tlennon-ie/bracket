@@ -89,7 +89,7 @@ num_repeats = 1
 
 Source and target images must have matching filenames.
 
-## Video template (Wan, HunyuanVideo, LTX-Video, FramePack)
+## Video template (Wan, HunyuanVideo, LTX-2, FramePack)
 
 ```toml
 [general]

@@ -206,10 +206,17 @@ def test_asha_resume_supported_list_covers_known_trainers() -> None:
     assert trainer_supports_resume("sdxl-sd-scripts") is True
     assert trainer_supports_resume("zimage-lora-musubi") is True
     assert trainer_supports_resume("flux2-klein-lora-musubi") is True
+    # Flux.1 moved to the sd-scripts backend.
+    assert trainer_supports_resume("flux1-lora-sd-scripts") is True
+    assert trainer_supports_resume("flux1-full-sd-scripts") is True
     assert trainer_supports_resume("nonexistent-trainer") is False
-    # Catch typos in the curated list: there are 19 trainer adapters.
+    # Removed adapters must not linger in the curated list.
+    assert trainer_supports_resume("wan-full-musubi") is False
+    assert trainer_supports_resume("ltx-video-lora-musubi") is False
+    # Catch typos in the curated list: 17 trainer adapters after dropping
+    # Wan full-FT and the musubi LTX-Video LoRA.
     from bracket.orchestrator.asha import _RESUME_SUPPORTED_TRAINERS
-    assert len(_RESUME_SUPPORTED_TRAINERS) == 19
+    assert len(_RESUME_SUPPORTED_TRAINERS) == 17
 
 
 def test_select_promoted_from_rung1_picks_top_half() -> None:

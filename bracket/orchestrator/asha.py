@@ -44,21 +44,19 @@ _RESUME_SUPPORTED_TRAINERS: frozenset[str] = frozenset({
     "sdxl-full-sd-scripts",
     "sd35-lora-sd-scripts",
     "sd35-full-sd-scripts",
+    "flux1-lora-sd-scripts",
+    "flux1-full-sd-scripts",
     # musubi-tuner family (similar):
-    "flux1-lora-musubi",
-    "flux1-full-musubi",
     "flux1-kontext-lora-musubi",
     "flux2-klein-lora-musubi",
     "zimage-lora-musubi",
     "zimage-full-musubi",
     "wan-lora-musubi",
-    "wan-full-musubi",
     "hunyuan-video-lora-musubi",
     "hunyuan-video-full-musubi",
     "qwen-image-lora-musubi",
     "qwen-image-full-musubi",
     "qwen-image-edit-lora-musubi",
-    "ltx-video-lora-musubi",
     "framepack-lora-musubi",
 })
 

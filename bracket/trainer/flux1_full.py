@@ -1,8 +1,18 @@
-"""Flux.1 full fine-tune trainer — wraps musubi-tuner flux_train.
+"""Flux.1 full fine-tune trainer — wraps sd-scripts/flux_train.py.
 
-Same shape as Z-Image full FT but with Flux.1's dual TE + ae argument names.
-Adafactor + fused_backward_pass + full_bf16 are the canonical full-FT setup;
-12B parameters means blocks_to_swap is essential below 80 GB.
+FLUX.1 (dev/schnell) full fine-tuning lives in **sd-scripts**, not musubi.
+Mirrors :mod:`bracket.trainer.sdxl_full` (the sd-scripts full-FT pattern):
+  - constructor takes ``sd_scripts_dir`` (not ``musubi_dir``)
+  - sd-scripts dataset TOML via ``derive_run_toml(target_format="sd-scripts")``
+  - INLINE latent caching (``--cache_latents --cache_latents_to_disk``)
+  - samples land in ``<output>/sample`` (singular, sd-scripts default)
+
+12B parameters means ``--blocks_to_swap`` is essential below 80 GB. The
+canonical full-FT optimizer is Adafactor + ``--fused_backward_pass`` +
+``--full_bf16`` with ``--max_grad_norm 0`` (fused backward doesn't compose
+with gradient clipping). FLUX.1-specific flags (``--clip_l`` / ``--t5xxl`` /
+``--ae`` / ``--guidance_scale`` / ``--timestep_sampling`` /
+``--model_prediction_type``) come from sd-scripts/docs/flux_train_network.md.
 """
 
 from __future__ import annotations
@@ -12,9 +22,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from bracket.dataset.runtime import derive_run_toml
-from bracket.hardware import (
-    MUSUBI_DATALOADER_WORKERS_BY_TIER, detect_gpu, vram_tier,
-)
+from bracket.hardware import detect_gpu, vram_tier
 from bracket.search.space import (
     CategoricalKnob, FixedKnob, FloatKnob, IntKnob, SearchSpace,
 )
@@ -22,7 +30,6 @@ from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
     make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
 )
-from bracket.trainer.flux1_lora import _flux1_pre_cache_commands
 
 
 _BATCH_BY_TIER = {
@@ -41,6 +48,7 @@ class Flux1FullConfig(TrainerConfig):
     lr_scheduler: str = "constant_with_warmup"
     lr_warmup_steps: int = 50
     discrete_flow_shift: float = 3.0
+    guidance_scale: float = 1.0
     train_batch_size: int = 1
     gradient_accumulation_steps: int = 1
     mixed_precision: str = "bf16"
@@ -51,12 +59,12 @@ class Flux1FullConfig(TrainerConfig):
 
 
 class Flux1FullTrainer(Trainer):
-    name = "flux1-full-musubi"
+    name = "flux1-full-sd-scripts"
 
     def __init__(
         self,
         *,
-        musubi_dir: Path,
+        sd_scripts_dir: Path,
         venv_python: Path,
         dit_path: str,
         vae_path: str,
@@ -64,17 +72,14 @@ class Flux1FullTrainer(Trainer):
         clip_l_path: str,
         vram_gb: Optional[float] = None,
     ) -> None:
-        self.musubi_dir = Path(musubi_dir).resolve()
+        self.sd_scripts_dir = Path(sd_scripts_dir).resolve()
         self.venv_python = Path(venv_python).resolve()
         self.dit_path = dit_path
         self.vae_path = vae_path
         self.t5xxl_path = t5xxl_path
         self.clip_l_path = clip_l_path
-        self.train_script = self.musubi_dir / "src" / "musubi_tuner" / "flux_train.py"
-        if not self.train_script.exists():
-            self.train_script = self.musubi_dir / "flux_train.py"
-        if not self.train_script.exists():
-            raise FileNotFoundError(f"flux_train.py not found under {self.musubi_dir}")
+        if not (self.sd_scripts_dir / "flux_train.py").exists():
+            raise FileNotFoundError(f"flux_train.py not found in {self.sd_scripts_dir}")
         if not self.venv_python.exists():
             raise FileNotFoundError(f"venv python not found: {self.venv_python}")
         if vram_gb is None:
@@ -100,6 +105,7 @@ class Flux1FullTrainer(Trainer):
                 "full_bf16": FixedKnob(value=True),
                 "fused_backward_pass": FixedKnob(value=True),
                 "max_grad_norm": FixedKnob(value=0.0),
+                "guidance_scale": FixedKnob(value=1.0),
                 "blocks_to_swap": FixedKnob(value=_FULL_SWAP_BY_TIER[self.tier]),
             },
         )
@@ -133,6 +139,7 @@ class Flux1FullTrainer(Trainer):
             lr_scheduler=str(knobs["lr_scheduler"]),
             lr_warmup_steps=int(knobs["lr_warmup_steps"]),
             discrete_flow_shift=float(knobs["discrete_flow_shift"]),
+            guidance_scale=float(knobs["guidance_scale"]),
             train_batch_size=int(knobs["train_batch_size"]),
             gradient_accumulation_steps=int(knobs["gradient_accumulation_steps"]),
             mixed_precision=str(knobs["mixed_precision"]),
@@ -140,16 +147,6 @@ class Flux1FullTrainer(Trainer):
             fused_backward_pass=bool(knobs["fused_backward_pass"]),
             max_grad_norm=float(knobs["max_grad_norm"]),
             blocks_to_swap=int(knobs["blocks_to_swap"]),
-        )
-
-    def session_setup_commands(self, *, dataset_toml: Path, run_dir: Path) -> list[LaunchSpec]:
-        return _flux1_pre_cache_commands(
-            musubi_dir=self.musubi_dir, venv_python=self.venv_python,
-            run_dir=run_dir, dataset_toml=dataset_toml,
-            cache_latents_module="musubi_tuner.flux_cache_latents",
-            cache_te_module="musubi_tuner.flux_cache_text_encoder_outputs",
-            vae_path=self.vae_path, t5xxl_path=self.t5xxl_path,
-            clip_l_path=self.clip_l_path,
         )
 
     def prepare_run(
@@ -171,7 +168,7 @@ class Flux1FullTrainer(Trainer):
         run_dir = Path(run_dir).resolve()
         output_dir = run_dir / "output"
         logging_dir = run_dir / "logs"
-        sample_dir = output_dir / "sample"
+        sample_dir = output_dir / "sample"  # sd-scripts default — singular
         for d in (output_dir, logging_dir, sample_dir):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -179,16 +176,16 @@ class Flux1FullTrainer(Trainer):
             source_toml=dataset_toml,
             target_path=run_dir / "dataset.toml",
             batch_size=config.train_batch_size,
-            target_format="musubi",
+            target_format="sd-scripts",
         )
 
         cmd: list[str] = [
             *make_accelerate_launch_prefix(self.venv_python, mixed_precision=config.mixed_precision),
-            str(self.train_script),
-            "--dit", self.dit_path,
-            "--ae", self.vae_path,
-            "--t5xxl", self.t5xxl_path,
+            "flux_train.py",
+            "--pretrained_model_name_or_path", self.dit_path,
             "--clip_l", self.clip_l_path,
+            "--t5xxl", self.t5xxl_path,
+            "--ae", self.vae_path,
             "--dataset_config", str(run_toml),
             "--output_dir", str(output_dir),
             "--output_name", "candidate",
@@ -199,22 +196,37 @@ class Flux1FullTrainer(Trainer):
             "--optimizer_type", config.optimizer_type,
             "--lr_scheduler", config.lr_scheduler,
             "--lr_warmup_steps", str(config.lr_warmup_steps),
+            "--train_batch_size", str(config.train_batch_size),
             "--gradient_accumulation_steps", str(config.gradient_accumulation_steps),
             "--mixed_precision", config.mixed_precision,
             "--max_grad_norm", str(config.max_grad_norm),
             "--max_train_steps", str(max_steps),
             "--seed", str(seed),
-            "--gradient_checkpointing",
-            "--sdpa",
+            # FLUX.1-specific training parameters.
+            "--guidance_scale", f"{config.guidance_scale:.4g}",
             "--timestep_sampling", "shift",
-            "--weighting_scheme", "none",
             "--discrete_flow_shift", f"{config.discrete_flow_shift:.4f}",
-            "--max_data_loader_n_workers", str(MUSUBI_DATALOADER_WORKERS_BY_TIER[self.tier]),
-            "--persistent_data_loader_workers",
+            "--model_prediction_type", "raw",
+            "--gradient_checkpointing",
+            "--cache_latents",
+            "--cache_latents_to_disk",
+            # Cache the (frozen) text-encoder outputs too, so CLIP-L + T5-XXL
+            # don't stay resident in VRAM for the whole run — without this a
+            # full FT of the 12B DiT OOMs on anything below ~40GB even with
+            # --blocks_to_swap. Mirrors the LoRA adapter.
+            "--cache_text_encoder_outputs",
+            "--cache_text_encoder_outputs_to_disk",
+            "--sdpa",
+            "--save_precision", "bf16",
+            "--save_model_as", "safetensors",
             "--save_every_n_steps", str(resolve_save_every_n_steps(save_every_n_steps, max_steps=max_steps)),
-            "--no_metadata",
-            "--mem_eff_save",
+            "--max_data_loader_n_workers", "2",
+            "--persistent_data_loader_workers",
         ]
+        # Skip the per-image latent integrity check when already cached.
+        from bracket.dataset.latent_cache import dataset_has_cached_latents
+        if dataset_has_cached_latents(dataset_toml):
+            cmd.append("--skip_cache_check")
         if config.full_bf16:
             cmd.append("--full_bf16")
         if config.fused_backward_pass:
@@ -237,7 +249,7 @@ class Flux1FullTrainer(Trainer):
             cmd += ["--resume", str(resume_from)]
 
         return LaunchSpec(
-            cmd=cmd, cwd=self.musubi_dir, env=make_subprocess_env(),
+            cmd=cmd, cwd=self.sd_scripts_dir, env=make_subprocess_env(),
             output_dir=output_dir, logging_dir=logging_dir,
             tfevents_glob=str(logging_dir / "**" / "events.out.tfevents.*"),
             sample_dir=sample_dir,

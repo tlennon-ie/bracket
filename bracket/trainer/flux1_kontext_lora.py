@@ -29,12 +29,31 @@ from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
     make_accelerate_launch_prefix, make_subprocess_env, resolve_save_every_n_steps,
 )
-from bracket.trainer.flux1_lora import Flux1LoRAConfig, _flux1_pre_cache_commands
 
 
 @dataclass
-class Flux1KontextLoRAConfig(Flux1LoRAConfig):
-    """Identical knob shape to Flux1LoRAConfig — edit pairing in dataset TOML."""
+class Flux1KontextLoRAConfig(TrainerConfig):
+    """Knob shape for the musubi Flux.1-Kontext edit LoRA.
+
+    Standalone (no longer shares a base with the sd-scripts Flux.1 LoRA
+    config, which moved to a different backend and flag set).
+    """
+    learning_rate: float = 1e-4
+    optimizer_type: str = "AdamW8bit"
+    lr_scheduler: str = "cosine"
+    lr_warmup_steps: int = 100
+    network_dim: int = 32
+    network_alpha: float = 16.0
+    discrete_flow_shift: float = 3.0
+    train_batch_size: int = 1
+    gradient_accumulation_steps: int = 1
+    mixed_precision: str = "bf16"
+    max_grad_norm: float = 1.0
+    fp8_base: bool = True
+    fp8_scaled: bool = False
+    gradient_checkpointing: bool = True
+    blocks_to_swap: int = 0
+    dataloader_workers: int = 2
 
 
 class Flux1KontextLoRATrainer(Trainer):
@@ -158,7 +177,7 @@ class Flux1KontextLoRATrainer(Trainer):
         )
 
     def session_setup_commands(self, *, dataset_toml: Path, run_dir: Path) -> list[LaunchSpec]:
-        return _flux1_pre_cache_commands(
+        return _flux_kontext_pre_cache_commands(
             musubi_dir=self.musubi_dir, venv_python=self.venv_python,
             run_dir=run_dir, dataset_toml=dataset_toml,
             cache_latents_module="musubi_tuner.flux_kontext_cache_latents",
@@ -255,3 +274,50 @@ class Flux1KontextLoRATrainer(Trainer):
             tfevents_glob=str(logging_dir / "**" / "events.out.tfevents.*"),
             sample_dir=sample_dir,
         )
+
+
+def _flux_kontext_pre_cache_commands(
+    *,
+    musubi_dir: Path,
+    venv_python: Path,
+    run_dir: Path,
+    dataset_toml: Path,
+    cache_latents_module: str,
+    cache_te_module: str,
+    vae_path: str,
+    t5xxl_path: str,
+    clip_l_path: str,
+) -> list[LaunchSpec]:
+    """Flux.1-Kontext musubi pre-cache: dual TE (T5-XXL + CLIP-L)."""
+    env = make_subprocess_env()
+    run_dir = Path(run_dir).resolve()
+    logging_dir = run_dir / "logs"
+    logging_dir.mkdir(parents=True, exist_ok=True)
+    flat_toml = derive_run_toml(
+        source_toml=dataset_toml,
+        target_path=run_dir / "dataset_flat.toml",
+        target_format="musubi",
+    )
+    return [
+        LaunchSpec(
+            cmd=[
+                str(venv_python), "-m", cache_latents_module,
+                "--dataset_config", str(flat_toml),
+                "--vae", vae_path,
+            ],
+            cwd=musubi_dir, env=env,
+            output_dir=run_dir, logging_dir=logging_dir,
+            tfevents_glob="",
+        ),
+        LaunchSpec(
+            cmd=[
+                str(venv_python), "-m", cache_te_module,
+                "--dataset_config", str(flat_toml),
+                "--t5xxl", t5xxl_path,
+                "--clip_l", clip_l_path,
+            ],
+            cwd=musubi_dir, env=env,
+            output_dir=run_dir, logging_dir=logging_dir,
+            tfevents_glob="",
+        ),
+    ]
