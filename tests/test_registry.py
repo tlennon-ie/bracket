@@ -27,6 +27,7 @@ def test_list_families_includes_all_supported():
         "Flux.1", "Flux.1-Kontext", "Qwen-Image", "Qwen-Image-Edit",
         "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "FramePack",
         "FLUX.2", "HiDream", "HunyuanVideo 1.5", "Kandinsky 5",
+        "Ideogram 4", "Krea 2",
         # ai-toolkit (ostris) families
         "Chroma", "Lumina2", "OmniGen2", "Flex.1", "Flex.2",
     }
@@ -301,6 +302,30 @@ def test_kandinsky5_lora_preset_constructs_trainer(tmp_path):
         vram_gb=32.0,
     )
     assert trainer.name == "kandinsky5-lora"
+
+
+def test_ideogram4_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "ideogram4_train_network.py")
+    preset = get_preset("Ideogram 4", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae", text_encoder_path="/x/te",
+        vram_gb=24.0,
+    )
+    assert trainer.name == "ideogram4-lora"
+
+
+def test_krea2_lora_preset_constructs_trainer(tmp_path):
+    musubi, py = _stub_musubi(tmp_path, "krea2_train_network.py")
+    preset = get_preset("Krea 2", "LoRA")
+    assert preset.needs_pre_cache is True
+    trainer = preset.trainer_factory(
+        musubi_dir=str(musubi), venv_python=str(py),
+        dit_path="/x/dit", vae_path="/x/vae", text_encoder_path="/x/te",
+        vram_gb=24.0,
+    )
+    assert trainer.name == "krea2-lora"
 
 
 # ─────────────────────────── ai-toolkit (ostris) ───────────────────────────

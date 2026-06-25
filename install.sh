@@ -372,6 +372,13 @@ $lms_line
 # BRACKET_KANDINSKY5_VAE_PATH=/abs/path/to/kandinsky5-vae.safetensors
 # BRACKET_KANDINSKY5_QWEN_TE_PATH=/abs/path/to/qwen2_5_vl.safetensors
 # BRACKET_KANDINSKY5_CLIP_TE_PATH=/abs/path/to/clip_l.safetensors
+# Ideogram 4 (image; FP8-only DiT, Flux2 VAE, Qwen3-VL-8B TE)
+# BRACKET_IDEOGRAM4_DIT_PATH=/abs/path/to/ideogram4_fp8_scaled.safetensors
+# BRACKET_IDEOGRAM4_VAE_PATH=/abs/path/to/flux2-vae.safetensors
+# BRACKET_IDEOGRAM4_TE_PATH=/abs/path/to/qwen3vl_8b_fp8_scaled.safetensors
+# Krea 2 (image; train on RAW DiT; reuses BRACKET_QWEN_IMAGE_VAE_PATH; Qwen3-VL-4B TE)
+# BRACKET_KREA2_DIT_PATH=/abs/path/to/krea2-raw.safetensors
+# BRACKET_KREA2_TE_PATH=/abs/path/to/qwen3vl_4b.safetensors
 EOF
     ok "Wrote .env"
 else
