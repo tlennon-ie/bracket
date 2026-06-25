@@ -38,7 +38,16 @@ class LaunchSpec:
     #   "stdout_log" — the trainer only logs loss to stdout (e.g. LTX-2 /
     #                  ltx-trainer). The runner skips the tfevents glob and the
     #                  scorer parses ``RunResult.log_path`` via log_loss_reader.
+    #   "sqlite_db"  — the trainer writes a structured SQLite loss database
+    #                  instead of tfevents (e.g. ai-toolkit / ostris, with
+    #                  ``logging.use_ui_logger: true`` → ``loss_log.db``). The
+    #                  runner skips the tfevents glob and the scorer parses
+    #                  ``loss_db_path`` via sqlite_loss_reader.
     loss_source: str = "tfevents"
+    # Path to the SQLite ``loss_log.db`` for ``loss_source == "sqlite_db"``
+    # trainers (set by the ai-toolkit adapter to ``<save_root>/loss_log.db``).
+    # None for every other loss source.
+    loss_db_path: Optional[Path] = None
 
 
 def make_accelerate_launch_prefix(

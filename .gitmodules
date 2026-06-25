@@ -10,3 +10,7 @@
 	path = vendor/ltx2
 	url = https://github.com/Lightricks/LTX-2
 	shallow = true
+[submodule "vendor/ai-toolkit"]
+	path = vendor/ai-toolkit
+	url = https://github.com/ostris/ai-toolkit
+	shallow = true

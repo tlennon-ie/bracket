@@ -28,6 +28,7 @@ from bracket.ema import EMASmoother
 from bracket.frame import LossFrame
 from bracket.judge.base import JudgeReport, SampleJudge
 from bracket.log_loss_reader import parse_log_loss
+from bracket.sqlite_loss_reader import parse_sqlite_loss
 from bracket.tfevents_reader import TFEventsTail
 from bracket.video import (
     VIDEO_EXTENSIONS, extract_all_videos, is_video_file, list_video_samples,
@@ -47,6 +48,21 @@ _VIDEO_STEM_RE = re.compile(r"^(?P<base>.+)\.(?P<ext>mp4|webm|mov|mkv)$", re.IGN
 # (see ``video.extract_frames``), so the trailing ``_frameNN`` is optional.
 _LTX2_STEP_STEM_RE = re.compile(
     r"^step_\d+_(?P<one_based_idx>\d+)(?:_frame\d+)?$", re.IGNORECASE
+)
+
+# ai-toolkit (ostris) writes validation samples to ``<save_root>/samples/`` as
+# ``[time]_{step_num}_[count].{ext}`` where the template substitutes to
+# ``<gen_time_ms>__<step_zfill9>_<count>.<jpg|png|webp|...>`` (the ``__`` double
+# underscore comes from the empty ``[time]_<step_num>`` join when ``step_num``
+# already carries a leading ``_``). ``<count>`` is the 0-BASED prompt index
+# (``gen_config.save_image(img, i)`` with ``i`` enumerating the prompts list),
+# zero-padded only to ``len(str(max_count))`` which is 1 for the default
+# ``max_count=0`` — so a bare ``_0``/``_2``. There is NO sidecar .txt. The
+# 13+-digit millisecond timestamp followed by the ``__`` is the distinguishing
+# feature that keeps this from colliding with the sd-scripts convention. When
+# the video pipeline extracts frames, the stem gains a trailing ``_frameNN``.
+_AITK_STEP_STEM_RE = re.compile(
+    r"^\d{12,}__\d+_(?P<zero_based_idx>\d+)(?:_frame\d+)?$"
 )
 
 
@@ -132,6 +148,29 @@ class Scorer:
             )
         return self._score_frames(frames)
 
+    def score_sqlite_loss(self, loss_db_path: Optional[Path]) -> ScoreReport:
+        """Loss-only scoring from a SQLite ``loss_log.db`` (ai-toolkit / ostris).
+
+        The SQLite analog of ``score_tfevents`` / ``score_log_loss``: parse the
+        run's ``loss_log.db`` into LossFrames and run the SAME ``_score_frames``
+        divergence / slope / NaN logic. Disqualifies with ``no_loss_db`` /
+        ``empty_loss_db`` — the SQLite counterparts of ``no_tfevents`` /
+        ``empty_tfevents``. A missing/unopenable DB or one with no loss rows is
+        handled by ``parse_sqlite_loss`` returning ``[]`` (it never raises).
+        """
+        if loss_db_path is None or not Path(loss_db_path).exists():
+            return ScoreReport(
+                score=math.inf, components={}, n_steps=0,
+                disqualified="no_loss_db",
+            )
+        frames = parse_sqlite_loss(loss_db_path, ema_alpha=self.ema_alpha)
+        if not frames:
+            return ScoreReport(
+                score=math.inf, components={}, n_steps=0,
+                disqualified="empty_loss_db",
+            )
+        return self._score_frames(frames)
+
     def score_run(
         self,
         *,
@@ -140,21 +179,28 @@ class Scorer:
         prompts: Optional[list[str]] = None,
         n_in_dist_prompts: Optional[int] = None,
         loss_log_path: Optional[Path] = None,
+        loss_db_path: Optional[Path] = None,
         loss_source: str = "tfevents",
     ) -> ScoreReport:
         """Score a full run: loss component + sample component (if judge + samples).
 
         The loss component comes from tfevents when ``tfevents_path`` is present
-        (every existing trainer). Otherwise, when ``loss_log_path`` is given,
-        the loss curve is parsed from the trainer's stdout log (LTX-2 /
-        ltx-trainer) and fed through the SAME ``_score_frames`` path so the
-        divergence / slope / NaN disqualification logic is identical. tfevents
-        is always preferred when both are supplied. ``loss_source`` (the
-        candidate's ``LaunchSpec.loss_source``) gates the stdout-log fallback:
-        only ``"stdout_log"`` trainers fall through to ``score_log_loss``. A
-        tfevents trainer that produced no events (crashed/killed before the
-        first write) keeps the historical ``no_tfevents`` disqualification —
-        we never relabel it ``empty_loss_log`` off the always-present run log.
+        (every existing trainer). Otherwise the loss curve is parsed from the
+        trainer's non-tfevents telemetry and fed through the SAME
+        ``_score_frames`` path so the divergence / slope / NaN disqualification
+        logic is identical. tfevents is always preferred when both are supplied.
+        ``loss_source`` (the candidate's ``LaunchSpec.loss_source``) gates the
+        fallback:
+
+          - ``"stdout_log"`` → parse ``loss_log_path`` via ``score_log_loss``
+            (LTX-2 / ltx-trainer).
+          - ``"sqlite_db"``  → parse ``loss_db_path`` via ``score_sqlite_loss``
+            (ai-toolkit / ostris ``loss_log.db``).
+
+        A tfevents trainer that produced no events (crashed/killed before the
+        first write) keeps the historical ``no_tfevents`` disqualification — we
+        never relabel it ``empty_loss_log`` / ``empty_loss_db`` off another
+        source.
 
         When ``n_in_dist_prompts`` is set, prompts at indices ``[0, n)`` are
         treated as in-distribution and the rest (typically those concatenated
@@ -170,6 +216,10 @@ class Scorer:
             # ``score_log_loss`` handles a None/missing path itself (→
             # ``no_loss_log``), so the discriminator is purely ``loss_source``.
             report = self.score_log_loss(loss_log_path)
+        elif loss_source == "sqlite_db":
+            # ``score_sqlite_loss`` handles a None/missing db itself (→
+            # ``no_loss_db``), so the discriminator is purely ``loss_source``.
+            report = self.score_sqlite_loss(loss_db_path)
         else:
             # tfevents trainer that wrote no events (crashed/killed before the
             # first write). ``tfevents_path`` is None here, so this yields the
@@ -445,6 +495,13 @@ def _extract_prompt_idx(stem: str) -> Optional[int]:
         one_based = int(ltx.group("one_based_idx"))
         if one_based >= 1:
             return one_based - 1
+    # ai-toolkit (ostris): ``<gen_time_ms>__<step_zfill9>_<count>`` with a
+    # 0-BASED ``count`` (optional ``_frameNN`` for extracted video frames).
+    # Checked before the sd-scripts ``parts[-2]`` branch, which would otherwise
+    # mistake the zero-padded step for the index.
+    aitk = _AITK_STEP_STEM_RE.match(stem)
+    if aitk is not None:
+        return int(aitk.group("zero_based_idx"))
     parts = stem.split("_")
     # musubi: idx sits one position before a 14-digit timestamp segment.
     for i, p in enumerate(parts):

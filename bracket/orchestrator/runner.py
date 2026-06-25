@@ -182,10 +182,11 @@ class RunLauncher:
                 pass
 
         duration = time.monotonic() - start
-        # Stdout-log trainers (e.g. LTX-2) never write tfevents — skip the glob
-        # entirely so we don't pick up a stale file from a sibling run. The
-        # scorer reads the loss curve from ``log_path`` instead.
-        if spec.loss_source == "stdout_log":
+        # Trainers that don't write tfevents (LTX-2 stdout logs, ai-toolkit
+        # ``loss_log.db``) skip the glob entirely so we don't pick up a stale
+        # file from a sibling run. The scorer reads the loss curve from
+        # ``log_path`` (stdout_log) or ``spec.loss_db_path`` (sqlite_db) instead.
+        if spec.loss_source != "tfevents":
             tfevents = None
         else:
             tfevents = self._find_tfevents(spec.tfevents_glob)
