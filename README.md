@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/license-MIT-1f1f1f.svg" alt="License MIT">
   <img src="https://img.shields.io/badge/python-3.10%2B-1f1f1f.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/cross--platform-linux%20%C2%B7%20mac%20%C2%B7%20windows-1f1f1f.svg" alt="Cross-platform">
-  <img src="https://img.shields.io/badge/trainers-sd--scripts%20%C2%B7%20musubi--tuner%20%C2%B7%20ltx--trainer-1f1f1f.svg" alt="Trainers">
+  <img src="https://img.shields.io/badge/trainers-sd--scripts%20%C2%B7%20musubi--tuner%20%C2%B7%20ltx--trainer%20%C2%B7%20ai--toolkit-1f1f1f.svg" alt="Trainers">
 </p>
 
 ![bracket Monitor tab — live loss chart, score history, sticky run controls](./assets/screenshots/monitor.png)
@@ -45,6 +45,8 @@ It drives the trainers you already use through real `accelerate launch` subproce
 | LTX-2 · I2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video). |
 
 LTX-2 full fine-tune is out of scope (needs 4-8× H100 + FSDP).
+
+ai-toolkit ([ostris/ai-toolkit](https://github.com/ostris/ai-toolkit)) is now a supported backend, vendored under `vendor/ai-toolkit` with its own pip/venv environment; ai-toolkit-backed model presets are landing via the new backend.
 
 No cloud. No paid tier. No telemetry.
 

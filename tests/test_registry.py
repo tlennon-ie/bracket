@@ -27,6 +27,8 @@ def test_list_families_includes_all_supported():
         "Flux.1", "Flux.1-Kontext", "Qwen-Image", "Qwen-Image-Edit",
         "SD3.5", "HunyuanVideo", "Wan 2.2", "Wan 2.1", "FramePack",
         "FLUX.2", "HiDream", "HunyuanVideo 1.5", "Kandinsky 5",
+        # ai-toolkit (ostris) families
+        "Chroma", "Lumina2", "OmniGen2", "Flex.1", "Flex.2",
     }
     assert expected_extension.issubset(set(families))
     # LTX-Video (musubi) was dropped — native LTX-2 covers it now.
@@ -299,3 +301,83 @@ def test_kandinsky5_lora_preset_constructs_trainer(tmp_path):
         vram_gb=32.0,
     )
     assert trainer.name == "kandinsky5-lora"
+
+
+# ─────────────────────────── ai-toolkit (ostris) ───────────────────────────
+
+
+def _stub_aitk(tmp_path):
+    """Create a stub ai-toolkit checkout dir with a no-op run.py."""
+    d = tmp_path / "ai-toolkit"
+    d.mkdir()
+    (d / "run.py").write_text("# placeholder\n", encoding="utf-8")
+    py = tmp_path / "python.exe"
+    py.write_bytes(b"")
+    return d, py
+
+
+def test_aitk_presets_registered():
+    ids = [p.id for p in PRESETS]
+    for pid in (
+        "aitk-chroma-lora", "aitk-lumina2-lora", "aitk-omnigen2-lora",
+        "aitk-flex1-lora", "aitk-flex2-lora",
+    ):
+        assert pid in ids, f"missing ai-toolkit preset {pid}"
+
+
+def test_aitk_presets_do_not_need_pre_cache():
+    for fam in ("Chroma", "Lumina2", "OmniGen2", "Flex.1", "Flex.2"):
+        p = get_preset(fam, "LoRA")
+        assert p is not None and p.needs_pre_cache is False
+
+
+def test_aitk_chroma_lora_preset_constructs_trainer(tmp_path):
+    d, py = _stub_aitk(tmp_path)
+    preset = get_preset("Chroma", "LoRA")
+    trainer = preset.trainer_factory(
+        aitk_dir=str(d), venv_python=str(py),
+        model_name_or_path="lodestones/Chroma", vram_gb=24.0,
+    )
+    assert trainer.name == "aitk-lora-chroma"
+    assert trainer.model_id == "chroma"
+    assert trainer.model_extra == {"arch": "chroma", "quantize": True}
+
+
+def test_aitk_omnigen2_lora_preset_constructs_trainer(tmp_path):
+    d, py = _stub_aitk(tmp_path)
+    preset = get_preset("OmniGen2", "LoRA")
+    trainer = preset.trainer_factory(
+        aitk_dir=str(d), venv_python=str(py),
+        model_name_or_path="OmniGen2/OmniGen2", vram_gb=24.0,
+    )
+    assert trainer.name == "aitk-lora-omnigen2"
+    assert trainer.model_id == "omnigen2"
+    assert trainer.model_extra == {"arch": "omnigen2", "quantize_te": True}
+
+
+def test_aitk_flex_presets_construct_trainers(tmp_path):
+    d, py = _stub_aitk(tmp_path)
+    flex1 = get_preset("Flex.1", "LoRA").trainer_factory(
+        aitk_dir=str(d), venv_python=str(py),
+        model_name_or_path="ostris/Flex.1-alpha", vram_gb=24.0,
+    )
+    assert flex1.name == "aitk-lora-flex1"
+    flex2 = get_preset("Flex.2", "LoRA").trainer_factory(
+        aitk_dir=str(d), venv_python=str(py),
+        model_name_or_path="ostris/Flex.2-preview", vram_gb=24.0,
+    )
+    assert flex2.name == "aitk-lora-flex2"
+
+
+def test_aitk_default_model_name_or_path_per_preset():
+    expected = {
+        "Chroma": "lodestones/Chroma",
+        "Lumina2": "Alpha-VLLM/Lumina-Image-2.0",
+        "OmniGen2": "OmniGen2/OmniGen2",
+        "Flex.1": "ostris/Flex.1-alpha",
+        "Flex.2": "ostris/Flex.2-preview",
+    }
+    for fam, hf_id in expected.items():
+        p = get_preset(fam, "LoRA")
+        field = next(f for f in p.fields if f.name == "model_name_or_path")
+        assert field.default == hf_id

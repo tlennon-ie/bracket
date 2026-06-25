@@ -117,12 +117,15 @@ def _execute_one(
         prompts=judge_prompts,
         n_in_dist_prompts=n_in_dist_prompts,
         # Passed unconditionally — the scorer prefers tfevents when present and
-        # only falls back to the stdout log for trainers that don't write
-        # tfevents (LTX-2 / ltx-trainer). Harmless for tfevents trainers.
+        # only falls back to non-tfevents telemetry for trainers that don't
+        # write tfevents (LTX-2 stdout log / ai-toolkit loss_log.db). Harmless
+        # for tfevents trainers.
         loss_log_path=result.log_path,
-        # ``loss_source`` gates the fallback: only ``stdout_log`` candidates
-        # parse the log. A tfevents trainer with no events keeps its
-        # ``no_tfevents`` DQ instead of being relabelled ``empty_loss_log``.
+        loss_db_path=spec.loss_db_path,
+        # ``loss_source`` gates the fallback: only ``stdout_log`` parses the log
+        # and only ``sqlite_db`` parses the db. A tfevents trainer with no
+        # events keeps its ``no_tfevents`` DQ instead of being relabelled
+        # ``empty_loss_log`` / ``empty_loss_db``.
         loss_source=spec.loss_source,
     )
     # Free the VLM's VRAM before the next training run starts. The judge's

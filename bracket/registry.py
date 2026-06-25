@@ -153,6 +153,25 @@ def _ltx2_trainer_dir_default() -> str:
 _DEFAULT_LTX2_TRAINER_DIR = _ltx2_trainer_dir_default()
 
 
+def _aitk_dir_default() -> str:
+    """Resolve the ai-toolkit checkout dir — env var or repo-vendored layout."""
+    if (env := os.environ.get("BRACKET_AITK_DIR")):
+        return env
+    return _first_existing(_REPO_VENDOR / "ai-toolkit")
+
+
+def _aitk_venv_python_default() -> str:
+    """Resolve the ai-toolkit venv python — env var or repo-vendored layout."""
+    if (env := os.environ.get("BRACKET_AITK_VENV_PYTHON")):
+        return env
+    suffix = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    return _first_existing(_REPO_VENDOR / "ai-toolkit-venv" / suffix)
+
+
+_DEFAULT_AITK_DIR = _aitk_dir_default()
+_DEFAULT_AITK_VENV_PYTHON = _aitk_venv_python_default()
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """One UI field — feeds into the trainer kwargs OR the orchestrator config."""
@@ -433,6 +452,25 @@ def _build_kandinsky5_lora(**kw: Any) -> Trainer:
     )
 
 
+def _build_aitk_lora(
+    *, model_id: str, model_extra: dict[str, Any], **kw: Any,
+) -> Trainer:
+    """Construct an ai-toolkit LoRA trainer.
+
+    ``model_extra`` is the model's architecture selector + quantize mode taken
+    verbatim from its ai-toolkit example config (chroma/omnigen2/flex2 use
+    ``arch``; lumina2 uses ``is_lumina2``; flex1 uses ``is_flux``; quantize vs
+    quantize_te differs too).
+    """
+    from bracket.trainer.aitk_lora import AiToolkitLoRATrainer
+    return AiToolkitLoRATrainer(
+        aitk_dir=kw["aitk_dir"], venv_python=kw["venv_python"],
+        model_name_or_path=kw["model_name_or_path"],
+        model_id=model_id, model_extra=model_extra,
+        vram_gb=kw.get("vram_gb"),
+    )
+
+
 _SDXL_PRETRAINED_FIELD = FieldSpec(
     name="pretrained_model", label="SDXL base path *",
     default=_DEFAULT_SDXL_PRETRAINED, required=True, kind="path",
@@ -465,6 +503,23 @@ _LTX2_TRAINER_DIR_FIELD = FieldSpec(
         "Path to Lightricks' native ltx-trainer package "
         "(<ltx2>/packages/ltx-trainer). Set BRACKET_LTX2_TRAINER_DIR to change "
         "the default."
+    ),
+)
+
+_AITK_DIR_FIELD = FieldSpec(
+    name="aitk_dir", label="ai-toolkit directory *",
+    default=_DEFAULT_AITK_DIR, required=True, kind="dir",
+    help=(
+        "Path to ostris' ai-toolkit checkout (the dir containing run.py). "
+        "Vendored at vendor/ai-toolkit; set BRACKET_AITK_DIR to override."
+    ),
+)
+_AITK_VENV_FIELD = FieldSpec(
+    name="venv_python", label="ai-toolkit venv python.exe *",
+    default=_DEFAULT_AITK_VENV_PYTHON, required=True, kind="path",
+    help=(
+        "The Python executable inside ai-toolkit's venv. Vendored at "
+        "vendor/ai-toolkit-venv; set BRACKET_AITK_VENV_PYTHON to override."
     ),
 )
 
@@ -1215,6 +1270,134 @@ PRESETS: tuple[ModelPreset, ...] = (
             "video LoRA on the HunyuanVideo backbone."
         ),
         needs_pre_cache=True,
+    ),
+    # ─────────────────────────── ai-toolkit (ostris) ───────────────────────────
+    ModelPreset(
+        id="aitk-chroma-lora",
+        model_family="Chroma",
+        training_type="LoRA",
+        display_name="Chroma · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            model_id="chroma", model_extra={"arch": "chroma", "quantize": True}, **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="Chroma model (HF id or path) *",
+                default="lodestones/Chroma", required=True, kind="string",
+                help="HF repo id or local path to the Chroma weights.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) — "
+            "YAML-config-driven, `arch: chroma`. Latents cache inline "
+            "(`cache_latents_to_disk`); loss is read from the SQLite "
+            "`loss_log.db` (`logging.use_ui_logger`). No separate pre-cache step."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-lumina2-lora",
+        model_family="Lumina2",
+        training_type="LoRA",
+        display_name="Lumina-Image-2.0 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            model_id="lumina2",
+            model_extra={"is_lumina2": True, "quantize_te": True}, **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="Lumina2 model (HF id or path) *",
+                default="Alpha-VLLM/Lumina-Image-2.0", required=True, kind="string",
+                help="HF repo id or local path to the Lumina-Image-2.0 weights.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`is_lumina2: true` (Lumina-Image-2.0, Gemma2 TE). Latents cache "
+            "inline; loss from the SQLite `loss_log.db`. No separate pre-cache."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-omnigen2-lora",
+        model_family="OmniGen2",
+        training_type="LoRA",
+        display_name="OmniGen2 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            model_id="omnigen2",
+            model_extra={"arch": "omnigen2", "quantize_te": True}, **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="OmniGen2 model (HF id or path) *",
+                default="OmniGen2/OmniGen2", required=True, kind="string",
+                help="HF repo id or local path to the OmniGen2 weights.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`arch: omnigen2`. Latents cache inline; loss from the SQLite "
+            "`loss_log.db`. No separate pre-cache."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-flex1-lora",
+        model_family="Flex.1",
+        training_type="LoRA",
+        display_name="Flex.1 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            model_id="flex1", model_extra={"is_flux": True, "quantize": True}, **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="Flex.1 model (HF id or path) *",
+                default="ostris/Flex.1-alpha", required=True, kind="string",
+                help="HF repo id or local path to the Flex.1-alpha weights.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`is_flux: true`. The Flex architecture requires "
+            "`bypass_guidance_embedding` during training (set automatically). "
+            "Latents cache inline; loss from the SQLite `loss_log.db`."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-flex2-lora",
+        model_family="Flex.2",
+        training_type="LoRA",
+        display_name="Flex.2 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            model_id="flex2",
+            model_extra={"arch": "flex2", "quantize": True, "quantize_te": True}, **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="Flex.2 model (HF id or path) *",
+                default="ostris/Flex.2-preview", required=True, kind="string",
+                help="HF repo id or local path to the Flex.2-preview weights.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`arch: flex2` (experimental controls + inpainting WIP model). "
+            "Flex requires `bypass_guidance_embedding` during training (set "
+            "automatically). Latents cache inline; loss from the SQLite "
+            "`loss_log.db`."
+        ),
+        needs_pre_cache=False,
     ),
 )
 

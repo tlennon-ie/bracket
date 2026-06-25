@@ -1,8 +1,9 @@
 # Updating bundled trainers
 
-`musubi-tuner`, `sd-scripts`, and `ltx2` ship as **git submodules** under
-`vendor/`, pinned to specific upstream commits in `.gitmodules`. End users get
-exactly the version maintainers tested — never an unannounced upstream change.
+`musubi-tuner`, `sd-scripts`, `ltx2`, and `ai-toolkit` ship as **git
+submodules** under `vendor/`, pinned to specific upstream commits in
+`.gitmodules`. End users get exactly the version maintainers tested — never an
+unannounced upstream change.
 
 Layout:
 
@@ -12,6 +13,8 @@ vendor/
 ├── sd-scripts/          # https://github.com/kohya-ss/sd-scripts   @ pinned SHA
 ├── ltx2/                # https://github.com/Lightricks/LTX-2       @ pinned SHA
 │   └── packages/ltx-trainer/  # native LTX-2 trainer (uv-managed, own .venv)
+├── ai-toolkit/          # https://github.com/ostris/ai-toolkit     @ pinned SHA
+├── ai-toolkit-venv/     # ai-toolkit venv (.gitignored — built by install.*)
 └── venv/                # shared trainer venv (.gitignored — built by install.*)
 ```
 
@@ -34,6 +37,31 @@ network access** (this is a slow clone that pins a commit):
 ```bash
 git submodule add https://github.com/Lightricks/LTX-2 vendor/ltx2
 git commit -m "deps: add ltx2 (native LTX-2 trainer) submodule"
+```
+
+Until that gitlink exists, the `.gitmodules` entry is harmless and the
+installer's `git submodule update --init --recursive` simply no-ops for it.
+
+## ai-toolkit (ostris/ai-toolkit)
+
+ai-toolkit is the `vendor/ai-toolkit` submodule (the [ostris/ai-toolkit](https://github.com/ostris/ai-toolkit)
+repo). Unlike the `uv`-managed `ltx-trainer`, it is a **pip/venv-managed
+project**: it ships a `requirements.txt` and its dependencies conflict with the
+shared `vendor/venv`, so it does *not* share it. The installer creates a
+dedicated venv at `vendor/ai-toolkit-venv`, installs the GPU-matched PyTorch
+wheel into it, then runs `pip install -r requirements.txt`. It skips the step
+(with a warning, not a failure) if the `vendor/ai-toolkit` gitlink hasn't been
+created yet.
+
+### One-time maintainer step — create the submodule gitlink
+
+The installer only `--init`s an *already-declared* submodule; it never adds
+one. The `vendor/ai-toolkit` gitlink must be created once by a maintainer
+**with network access** (this is a slow clone that pins a commit):
+
+```bash
+git submodule add https://github.com/ostris/ai-toolkit vendor/ai-toolkit
+git commit -m "deps: add ai-toolkit submodule"
 ```
 
 Until that gitlink exists, the `.gitmodules` entry is harmless and the
@@ -87,6 +115,20 @@ git add vendor/ltx2
 git commit -m "deps: bump ltx2 to <SHA-or-tag>"
 # Re-sync the uv-managed trainer env to pick up any dependency changes:
 ( cd vendor/ltx2/packages/ltx-trainer && uv sync )
+```
+
+### Bump ai-toolkit
+
+```bash
+cd vendor/ai-toolkit
+git fetch origin
+git checkout <new-SHA-or-tag>
+cd ../..
+git add vendor/ai-toolkit
+git commit -m "deps: bump ai-toolkit to <SHA-or-tag>"
+# Re-run the installer so the ai-toolkit venv picks up any new
+# requirements.txt entries:
+./install.sh        # or .\install.ps1 on Windows
 ```
 
 ### Verify before pushing

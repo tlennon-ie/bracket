@@ -7,11 +7,14 @@
 #   3. Detects GPU (nvidia-smi) and selects a matching PyTorch wheel.
 #   4. Installs Bracket + its dependencies.
 #   5. Builds the React frontend (frontend/dist) if Node.js/npm is present.
-#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner, ltx2) as
-#      pinned git submodules under vendor/ and creates a shared trainer
-#      venv at vendor/venv. The native LTX-2 trainer is uv-managed, so it
-#      gets its own .venv via `uv sync` (skipped if uv is absent). Bumping a
-#      trainer is a maintainer commit; see docs/UPDATING_TRAINERS.md.
+#   6. Syncs the trainers Bracket drives (sd-scripts, musubi-tuner, ltx2,
+#      ai-toolkit) as pinned git submodules under vendor/ and creates a
+#      shared trainer venv at vendor/venv. The native LTX-2 trainer is
+#      uv-managed, so it gets its own .venv via `uv sync` (skipped if uv is
+#      absent); ai-toolkit is pip/venv-managed, so it gets its own
+#      vendor/ai-toolkit-venv via `pip install -r requirements.txt` (skipped
+#      if the submodule is absent). Bumping a trainer is a maintainer commit;
+#      see docs/UPDATING_TRAINERS.md.
 #   7. Writes a .env with sensible defaults so the UI lands ready to run.
 #
 # Re-run is safe — every step is idempotent.
@@ -22,6 +25,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENDOR_ROOT="$REPO_ROOT/vendor"
 VENV_DIR="$REPO_ROOT/.venv"
 TRAINER_VENV="$VENDOR_ROOT/venv"
+# ai-toolkit is pip/venv-managed (its deps conflict with the shared trainer
+# venv), so it gets a dedicated venv alongside the submodule checkout.
+AITK_DIR="$VENDOR_ROOT/ai-toolkit"
+AITK_VENV="$VENDOR_ROOT/ai-toolkit-venv"
 # Legacy compatibility: write BRACKET_TRAINERS_ROOT into .env only if the
 # user already had it set (older installs targeted ~/.cache/bracket/trainers).
 LEGACY_TRAINERS_ROOT="${BRACKET_TRAINERS_ROOT:-}"
@@ -196,6 +203,44 @@ else
     ok "LTX-2 trainer environment ready (uv sync in $LTX2_TRAINER_DIR)"
 fi
 
+# ─── 6c. ai-toolkit trainer (pip/venv-managed) ─────────────────────
+# ostris/ai-toolkit ships a requirements.txt and its dependencies conflict
+# with the shared vendor/venv, so it gets its own dedicated venv at
+# vendor/ai-toolkit-venv (pip install -r requirements.txt), separate from
+# the shared trainer venv above. It is optional: if the gitlink hasn't been
+# created yet (see docs/UPDATING_TRAINERS.md) we skip it with a clear
+# message rather than failing the whole install.
+AITK_VENV_PYTHON="$AITK_VENV/bin/python"
+step "Setting up ai-toolkit trainer (pip/venv-managed)"
+if [ ! -d "$AITK_DIR" ]; then
+    warn "vendor/ai-toolkit not present (submodule gitlink not created yet) — skipping ai-toolkit trainer setup. See docs/UPDATING_TRAINERS.md."
+elif [ ! -f "$AITK_DIR/requirements.txt" ]; then
+    warn "vendor/ai-toolkit/requirements.txt missing — skipping ai-toolkit trainer setup. See docs/UPDATING_TRAINERS.md."
+else
+    if [ ! -d "$AITK_VENV" ]; then
+        python3 -m venv "$AITK_VENV"
+    fi
+    # shellcheck disable=SC1091
+    source "$AITK_VENV/bin/activate"
+    python -m pip install --quiet --upgrade pip wheel
+    # Install PyTorch matching the detected GPU first (mirrors the shared
+    # trainer-venv block), so the requirements.txt resolve picks the right
+    # CUDA build rather than a generic CPU wheel.
+    step "Installing PyTorch into ai-toolkit venv ($GPU_DESC)"
+    if [ -n "$TORCH_INDEX" ]; then
+        python -m pip install --quiet torch torchvision --index-url "$TORCH_INDEX"
+    else
+        python -m pip install --quiet torch torchvision
+        warn "No NVIDIA GPU detected — installed CPU-only PyTorch into ai-toolkit venv. Training will be very slow."
+    fi
+    # No --quiet here: any pip failure breaks every ai-toolkit run, so we
+    # want it visible.
+    python -m pip install -r "$AITK_DIR/requirements.txt" \
+        || fail "pip install -r vendor/ai-toolkit/requirements.txt failed — see output above"
+    deactivate
+    ok "ai-toolkit trainer environment ready ($AITK_VENV)"
+fi
+
 # Refresh a single KEY=value line in an existing .env file. No-op if
 # the current value already matches $want; otherwise replaces in place
 # (or appends if the key is missing). Used to migrate stale trainer
@@ -302,6 +347,10 @@ $lms_line
 # BRACKET_LTX2_MODEL_PATH=/abs/path/to/ltx-2.safetensors
 # BRACKET_LTX2_TEXT_ENCODER_PATH=/abs/path/to/gemma-text-encoder
 # BRACKET_LTX2_TRAINER_DIR=$LTX2_TRAINER_DIR
+
+# ─── ai-toolkit (ostris/ai-toolkit; pip/venv-managed, own venv) ─────
+# BRACKET_AITK_DIR=$AITK_DIR
+# BRACKET_AITK_VENV_PYTHON=$AITK_VENV_PYTHON
 
 # The presets below need an updated musubi-tuner checkout.
 
