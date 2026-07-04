@@ -580,6 +580,61 @@ def test_static_route_404_for_missing(
     assert res.status_code == 404
 
 
+# ───────────────────────────── run_id sanitisation ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["/api/runs/{rid}", "/api/runs/{rid}/log", "/api/runs/{rid}/loss"],
+)
+@pytest.mark.parametrize(
+    "bad_run_id",
+    [
+        "cand%00-001",  # NUL byte — reaches handler decoded, validator rejects
+        "-badstart",    # leading dash — outside the allowlist
+    ],
+)
+def test_run_id_endpoints_reject_bad_segment(
+    client: TestClient,
+    fresh_session: OrchestrationSession,
+    tmp_path: Path,
+    endpoint: str,
+    bad_run_id: str,
+) -> None:
+    """run_id values that reach the handler are validated as a safe segment.
+
+    A leading dash or a NUL byte is outside the allowlist, so the validator
+    rejects them with a 400 before any filesystem access.
+    """
+
+    fresh_session.state.output_dir = tmp_path
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    res = client.get(endpoint.format(rid=bad_run_id))
+    assert res.status_code == 400
+
+
+def test_nul_byte_run_id_rejected_with_400(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    """A NUL byte in run_id is rejected by the validator with an explicit 400."""
+
+    fresh_session.state.output_dir = tmp_path
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    res = client.get("/api/runs/cand%00-001/log")
+    assert res.status_code == 400
+
+
+def test_files_route_rejects_traversal_run_id(
+    client: TestClient, fresh_session: OrchestrationSession, tmp_path: Path,
+) -> None:
+    """The static-file mount validates the run_id segment too, not just the tail."""
+
+    fresh_session.state.output_dir = tmp_path
+    (tmp_path / "runs").mkdir(exist_ok=True)
+    res = client.get("/files/..%2F..%2Fetc/passwd.png")
+    assert res.status_code in (400, 403, 404)
+
+
 # ───────────────────────────── websocket ─────────────────────────────
 
 
