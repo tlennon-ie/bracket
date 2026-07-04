@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -123,6 +124,48 @@ _VALID_FILE_SUFFIXES = frozenset({
     ".mp4", ".webm", ".mov", ".mkv",
     ".txt", ".log", ".md", ".json",
 })
+
+
+# ``run_id`` arrives from URL path params (``/runs/{run_id}/...``,
+# ``/files/{run_id}/...``) and is joined straight into a filesystem path
+# under ``<output_dir>/runs``. Restrict it to a single, safe path segment so
+# a crafted id can never traverse out of that directory. Every id Bracket
+# actually mints is ``<prefix>-NNN-sN-<ts>`` / ``promoted-<hash>-<ts>`` (see
+# ``bracket/orchestrator/loop.py::_make_run_id`` and ``promote.py``), so this
+# allowlist never rejects a legitimate run. First char must be alphanumeric,
+# which rules out ``.``, ``..`` and ids starting with ``-``.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _safe_run_id(run_id: str) -> str:
+    """Return *run_id* unchanged if it is a safe single path segment.
+
+    Raises HTTP 400 for anything containing a path separator, ``..``, a NUL
+    byte, or otherwise outside the allowlist — the ways a user-supplied id
+    could escape ``<output_dir>/runs``. This is the sanitiser that guards
+    every ``run_id``-derived path in this module.
+    """
+
+    if run_id in (".", "..") or not _RUN_ID_RE.match(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid run_id.",
+        )
+    return run_id
+
+
+def _reject_nul(*values: str) -> None:
+    """Reject NUL bytes in user-supplied path strings.
+
+    Bracket is a single-user desktop tool, so the caller legitimately points
+    ``dataset_toml`` / ``output_dir`` / ``sample_prompts`` at arbitrary local
+    locations — we do not confine those to a fixed root. We do reject NUL,
+    which is never valid in a path and is a classic truncation trick.
+    """
+
+    for value in values:
+        if value and "\x00" in value:
+            raise ValueError("path contains a NUL byte")
 
 
 def _read_session_meta(output_dir: Path) -> dict[str, object]:
@@ -310,6 +353,17 @@ def _start_session_impl(
             status="bad_request",
             message="Missing required fields: " + ", ".join(missing),
         )
+
+    # Reject NUL bytes in the user-supplied local paths before they reach the
+    # filesystem. These are intentionally arbitrary local locations (Bracket
+    # is single-user desktop software), so we validate rather than confine.
+    try:
+        _reject_nul(
+            req.dataset_toml, req.output_dir,
+            req.sample_prompts, req.sample_prompts_ood or "",
+        )
+    except ValueError as e:
+        return StartSessionResponse(status="bad_request", message=f"Invalid path: {e}")
 
     # Validate objectives shape. Single-element list = legacy scalar TPE.
     # Exactly two valid score-component keys = NSGA-II multi-objective.
@@ -643,6 +697,7 @@ def _make_router() -> APIRouter:
     def run_detail(run_id: str) -> RunDetailOut:
         """Per-run detail. Replaces a future click-into-row UX."""
 
+        run_id = _safe_run_id(run_id)
         out_dir = get_session().snapshot().output_dir
         if out_dir is None:
             raise HTTPException(
@@ -703,6 +758,7 @@ def _make_router() -> APIRouter:
         for that single poll — the next poll resumes from EOF).
         """
 
+        run_id = _safe_run_id(run_id)
         out_dir = get_session().snapshot().output_dir
         if out_dir is None:
             return RunLogChunkOut(
@@ -757,6 +813,7 @@ def _make_router() -> APIRouter:
     ) -> LossSeriesOut:
         """Loss series for one run. Powers the live loss chart."""
 
+        run_id = _safe_run_id(run_id)
         out_dir = get_session().snapshot().output_dir
         if out_dir is None:
             raise HTTPException(
@@ -799,6 +856,7 @@ def _make_router() -> APIRouter:
         per-row "Export" button so users can save the winning config.
         """
 
+        run_id = _safe_run_id(run_id)
         out_dir = get_session().snapshot().output_dir
         if out_dir is None:
             raise HTTPException(
@@ -890,6 +948,18 @@ def _make_router() -> APIRouter:
           runs at a time. Caller should ensure the current session is
           stopped or done before promoting.
         """
+
+        try:
+            run_id = _safe_run_id(run_id)
+            _reject_nul(req.full_dataset_toml, req.output_dir, req.resume_from)
+        except (HTTPException, ValueError):
+            return JSONResponse(
+                content=PromoteRunResponse(
+                    status="bad_request",
+                    message="Invalid run_id or path.",
+                ).model_dump(),
+                status_code=400,
+            )
 
         session = get_session()
         if session.is_running():
@@ -1258,7 +1328,10 @@ def _make_files_router() -> APIRouter:
           3. Whitelist file extensions — never serve weights.
         """
 
-        # Step 1: cheap textual rejects.
+        # Step 0: validate run_id as a single safe path segment.
+        run_id = _safe_run_id(run_id)
+
+        # Step 1: cheap textual rejects on the free-form tail.
         if ".." in rel_path.split("/") or rel_path.startswith(("/", "\\")):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -1417,6 +1490,12 @@ def _mount_react_dist(app: FastAPI) -> None:
         # Reserved paths handled by other mounts/routers. Belt-and-braces
         # since /api, /files, /assets, and the websocket are registered first.
         if spa_path.startswith(("api/", "files/", "assets/")) or spa_path == "ws":
+            return Response(status_code=404)
+
+        # Reject traversal segments up front, then resolve and verify the
+        # result stays inside the built bundle. Two independent barriers so a
+        # crafted URL can never read outside ``frontend/dist``.
+        if ".." in spa_path.split("/") or spa_path.startswith(("/", "\\")) or "\x00" in spa_path:
             return Response(status_code=404)
 
         # Serve real files at the dist root (favicon.svg, logo.png, etc.).
