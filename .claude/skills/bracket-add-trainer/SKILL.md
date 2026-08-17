@@ -28,6 +28,35 @@ already covers most actively-used diffusion families:
 | Wan 2.2 | ✅ | — | `bracket/trainer/wan_lora.py` (musubi has no Wan full-FT script) |
 | Wan 2.1 | ✅ | — | (uses `wan_lora.py` with `wan_version="2.1"`) |
 | FramePack | ✅ | — | `bracket/trainer/framepack_lora.py` |
+| Chroma / Lumina2 / OmniGen2 / Flex.1 / Flex.2 | ✅ | — | `bracket/trainer/aitk_lora.py` + a profile |
+| LTX-2.5 | ✅ | — | `aitk_lora.py`, profile `ltx25` (`arch: ltx2.5`) |
+| MiniMax-H3 | ✅ | — | `aitk_lora.py`, profile `minimax_h3` |
+| MiniMax-H3 Ref2VA | ✅ | — | `aitk_lora.py`, profile `minimax_h3_ref2va` |
+| ACE-Step 1.5 / 1.5 XL (music) | ✅ | — | `aitk_lora.py`, profiles `ace_step_15*` |
+
+**Adding another ai-toolkit model is NOT a new trainer module.** The
+`AiToolkitLoRATrainer` adapter is arch-agnostic; what differs per model is a
+:class:`AiToolkitProfile` in
+[`bracket/trainer/aitk_profiles.py`](../../bracket/trainer/aitk_profiles.py) —
+the `arch` selector, quantize mode, `media_kind`
+(`image`/`video`/`audio`), and the per-arch deltas for the train / dataset /
+network / sample blocks. Transcribe those from ai-toolkit's own
+`ui/src/app/jobs/new/options.tsx` (its authoritative per-arch default table),
+add the profile, then add a `ModelPreset` pointing at it via `profile_id`.
+Skip steps 1-5 below entirely.
+
+Two traps when adding a *video* profile:
+- `datasets[].num_frames` defaults to **1** in ai-toolkit, which makes its
+  dataloader read stills. A video profile that omits it trains happily and
+  learns no motion. Always set it, on the model's VAE frame grid (LTX-2:
+  8n+1; MiniMax-H3: 17n+5).
+- `auto_frame_count: true` is rejected with `batch_size > 1`. Bracket pins
+  `batch_size` to a `FixedKnob(1)`, so this holds — don't unpin it for those
+  archs.
+
+**Not supported: MiniMax Music 3.** ai-toolkit has no arch for it; ACE-Step
+1.5 is the only music model ostris ships. Re-check
+`extensions_built_in/audio_models/` after an ai-toolkit bump before promising it.
 
 Confirm in [`bracket/registry.py`](../../bracket/registry.py) `PRESETS`
 tuple before adding work. If the model is listed but the user can't

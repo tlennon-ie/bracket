@@ -40,6 +40,7 @@ you never depend on any specific developer's machine.
 | VLM judge protocol + LMStudio impl | [`bracket/judge/`](./bracket/judge/) |
 | Markdown report (auto-regens on stale ledger) | [`bracket/proof/report.py`](./bracket/proof/report.py) |
 | Model + training-type registry (UI dropdowns) | [`bracket/registry.py`](./bracket/registry.py) |
+| ai-toolkit per-architecture settings (`arch` selector, quantize mode, video/audio deltas) | [`bracket/trainer/aitk_profiles.py`](./bracket/trainer/aitk_profiles.py) |
 | FastAPI server (HTTP + WebSocket + static frontend) | [`bracket/api/`](./bracket/api/) |
 | React frontend (Vite + shadcn/ui) | [`frontend/`](./frontend/) |
 | Results-page loss-curve overlay | [`frontend/src/components/results/RunComparisonChart.tsx`](./frontend/src/components/results/RunComparisonChart.tsx) |
@@ -128,7 +129,12 @@ synthesise tfevents files in-process — that's the right pattern.
 - Backend: FastAPI server + WebSocket loss streaming + 16 endpoints.
 - Frontend: React + Vite + shadcn/ui under `frontend/`.
 - Trainers supported: SDXL LoRA + full FT, Z-Image LoRA + full FT,
-  Flux-2-Klein LoRA.
+  Flux-2-Klein LoRA. Plus musubi/sd-scripts adapters for Flux.1, Qwen-Image,
+  SD3.5, HunyuanVideo (1.0 + 1.5), Wan, Kandinsky 5, Ideogram 4, Krea 2,
+  HiDream-O1, FramePack; native `ltx-trainer` for LTX-2 T2V/I2V; and
+  ai-toolkit for Chroma, Lumina2, OmniGen2, Flex.1/2, **LTX-2.5**,
+  **MiniMax-H3 (+ Ref2VA)**, and **ACE-Step 1.5 / XL** (music, loss-only
+  scoring — the VLM judge cannot hear audio samples).
 - Search: Optuna TPE (with curated warm-start) and Random.
 - Judge: LMStudio (Qwen3-VL by default). Hot-swappable.
 - Stats: Welch's t-test on best vs runner-up (multi-seed only).

@@ -131,6 +131,19 @@ git commit -m "deps: bump ai-toolkit to <SHA-or-tag>"
 ./install.sh        # or .\install.ps1 on Windows
 ```
 
+After an ai-toolkit bump, re-diff two upstream files against
+[`bracket/trainer/aitk_profiles.py`](../bracket/trainer/aitk_profiles.py):
+
+| Upstream file | What to check |
+|---|---|
+| `ui/src/app/jobs/new/options.tsx` | The per-arch default table our profiles transcribe. Changed `qtype`, adapter paths, frame counts, or guidance handling belong in the profile. |
+| `extensions_built_in/diffusion_models/__init__.py` and `extensions_built_in/audio_models/` | The registered arch list. New entries here are candidate presets; a *removed* arch silently breaks the preset that names it. |
+
+Profiles carry no version guard — an `arch` string ai-toolkit stopped
+recognising fails at trainer launch, not at import. `pytest -q
+tests/test_trainer_aitk_media.py` covers the config shape, not upstream's
+acceptance of it, so a bump that touches archs deserves one real smoke run.
+
 ### Verify before pushing
 
 ```bash

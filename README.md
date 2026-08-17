@@ -24,7 +24,7 @@ bracket is a single-machine hyperparameter-search and ranking tool for diffusion
 
 It drives the trainers you already use through real `accelerate launch` subprocesses. It does not re-implement training.
 
-- Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA), and LTX-2 video (T2V + I2V LoRA) via the native Lightricks `ltx-trainer`.
+- Trainers: SDXL (LoRA + full FT), Z-Image base / Turbo (LoRA + full FT), Flux-2-Klein 9B (LoRA), LTX-2 video (T2V + I2V LoRA) via the native Lightricks `ltx-trainer`, and — through ostris' ai-toolkit — LTX-2.5, MiniMax-H3 (+ Ref2VA), and ACE-Step 1.5 music LoRAs. Full list below.
 - Search: Optuna TPE with curated warm-start, or Random. User-set `lr_min/max` and `batch_size_min/max` bounds clamp every run in the session — baseline and curated configs included, not just sampled trials.
 - Judge: local LMStudio + Qwen3-VL by default. Hot-swappable.
 - Stats: Welch's t-test on best vs runner-up. Honest about single-seed results.
@@ -45,10 +45,22 @@ It drives the trainers you already use through real `accelerate launch` subproce
 | Krea 2 · LoRA | musubi-tuner backend. Text-to-image MMDiT; train on RAW, infer on Turbo. Reuses Qwen-Image VAE + Qwen3-VL-4B TE. |
 | LTX-2 · T2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video). |
 | LTX-2 · I2V LoRA | Native Lightricks `ltx-trainer` backend (YAML-config driven, Gemma text encoder, joint audio-video). |
+| Chroma · LoRA | ai-toolkit backend. |
+| Lumina-Image-2.0 · LoRA | ai-toolkit backend (`is_lumina2` selector, Gemma2 TE). |
+| OmniGen2 · LoRA | ai-toolkit backend. |
+| Flex.1 / Flex.2 · LoRA | ai-toolkit backend. Guidance embedder bypassed during training (set automatically). |
+| **LTX-2.5 · LoRA** | ai-toolkit backend (`arch: ltx2.5`). Joint audio-video; 49-frame clips / 121-frame samples at 24 fps; pre-quantised int8-ConvRot DiT + TE. Lightricks' own `ltx-trainer` has no 2.5 support yet, so 2.5 goes through ai-toolkit while 2.0/2.3 stay on the native rows above. |
+| **MiniMax-H3 · LoRA** | ai-toolkit backend (`arch: minimax_h3`). T2VA + I2V. Guidance-distilled — contrastive-guidance loss **and** ostris' training adapter are applied by default; `adaln_proj` excluded from the LoRA. 39-frame clips on the VAE's 17n+5 grid. |
+| **MiniMax-H3 Ref2VA · LoRA** | ai-toolkit backend (`arch: minimax_h3_ref2va`). Reference-to-video-audio: conditions on reference images/videos, so the dataset needs control paths. Same distillation handling, ref2va adapter. |
+| **ACE-Step 1.5 / 1.5 XL · LoRA** | ai-toolkit backend — **music**. Audio dataset (files + sidecar captions). Scored on the loss curve only: the VLM judge cannot listen to samples. |
 
 LTX-2 full fine-tune is out of scope (needs 4-8× H100 + FSDP).
 
-ai-toolkit ([ostris/ai-toolkit](https://github.com/ostris/ai-toolkit)) is now a supported backend, vendored under `vendor/ai-toolkit` with its own pip/venv environment; ai-toolkit-backed model presets are landing via the new backend.
+The two ai-toolkit **video** rows need Pillow (`pip install Pillow`): ai-toolkit writes multi-frame samples as animated WebP rather than `.mp4`, and Pillow is what pulls representative frames out of them for the judge. Without it each clip is scored on one frame.
+
+ai-toolkit ([ostris/ai-toolkit](https://github.com/ostris/ai-toolkit)) is vendored under `vendor/ai-toolkit` with its own pip/venv environment. Its per-architecture settings live in one place — [`bracket/trainer/aitk_profiles.py`](./bracket/trainer/aitk_profiles.py) — transcribed from ai-toolkit's own default table; adding another ai-toolkit model is a profile plus a preset, with no adapter change.
+
+**Not supported: MiniMax Music 3.** MiniMax's open-weights music model (released 2026-08-13) has no trainer in ai-toolkit — the only music architecture ostris ships is ACE-Step 1.5 / 1.5 XL, which is what the rows above wire up. The only MiniMax-Music-3 LoRA trainer we found is an unaffiliated early-stage project, not something to vendor. Revisit when ostris adds the arch.
 
 No cloud. No paid tier. No telemetry.
 
@@ -127,6 +139,7 @@ Tab transitions are 200ms. The Monitor's loss chart updates over WebSocket — n
 | Concern | Single source of truth |
 |---|---|
 | Trainer adapters (SDXL, Z-Image, Flux-2-Klein, LTX-2) | [`bracket/trainer/`](./bracket/trainer/) |
+| ai-toolkit per-architecture settings (arch selector, quantize, video/audio deltas) | [`bracket/trainer/aitk_profiles.py`](./bracket/trainer/aitk_profiles.py) |
 | Hyperparameter search controllers | [`bracket/search/`](./bracket/search/) |
 | Run launcher (subprocess + tfevents) | [`bracket/orchestrator/runner.py`](./bracket/orchestrator/runner.py) |
 | Scoring (loss + VLM) | [`bracket/orchestrator/scorer.py`](./bracket/orchestrator/scorer.py) |

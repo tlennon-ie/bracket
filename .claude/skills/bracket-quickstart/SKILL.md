@@ -65,7 +65,9 @@ installer.
 Once the UI is up:
 1. **Setup tab** should show many model families (SDXL, Z-Image,
    Flux-2-Klein, Flux.1, Flux.1-Kontext, Qwen-Image, Qwen-Image-Edit,
-   SD3.5, HunyuanVideo, Wan 2.2, Wan 2.1, LTX-2, FramePack).
+   SD3.5, HunyuanVideo, Wan 2.2, Wan 2.1, LTX-2, FramePack) plus the
+   ai-toolkit-backed ones (Chroma, Lumina2, OmniGen2, Flex.1, Flex.2,
+   LTX-2.5, MiniMax-H3, MiniMax-H3 Ref2VA, ACE-Step 1.5 / 1.5 XL).
 2. Pick any one → `LoRA` or `Full FT`. Required fields appear (`*`
    marked).
 3. Trainer-infrastructure paths (musubi-tuner directory, sd-scripts
@@ -94,6 +96,18 @@ in the UI lists the env-var name in its help text. Common ones:
 | HunyuanVideo / FramePack | `BRACKET_HUNYUAN_VIDEO_DIT_PATH`, `BRACKET_HUNYUAN_VIDEO_VAE_PATH`, `BRACKET_LLAMA3_PATH`, `BRACKET_CLIP_L_PATH` |
 | Wan 2.1 / 2.2 | `BRACKET_WAN_DIT_PATH`, `BRACKET_WAN_VAE_PATH`, `BRACKET_UMT5_PATH` |
 | LTX-2 | `BRACKET_LTX2_MODEL_PATH`, `BRACKET_LTX2_TEXT_ENCODER_PATH` (native ltx-trainer) |
+
+The **ai-toolkit-backed** presets (Chroma, Lumina2, OmniGen2, Flex.1/2,
+LTX-2.5, MiniMax-H3 / Ref2VA, ACE-Step 1.5 / XL) take no `BRACKET_*_PATH` env
+vars — they use a single "model (HF id or path)" field prefilled with the
+model's canonical HF repo, and ai-toolkit downloads missing components into
+its own models folder on first load. Two of them need a prerequisite:
+
+- **LTX-2.5** — `Lightricks/LTX-2.5` is a gated repo. Accept the licence on
+  Hugging Face, then `huggingface-cli login`, before the first run.
+- **MiniMax-H3** — pulls the pre-quantised `Comfy-Org/MiniMax-H3` weights
+  (int8-ConvRot DiT + nvfp4 TE) plus ostris' training adapter. Expect a large
+  first-run download.
 
 Don't bundle weights — they're 5-25 GB per family. Tell the user to
 download the ones they need from Hugging Face / the model's release

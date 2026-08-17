@@ -23,12 +23,29 @@ Derived save layout (ai-toolkit):
     loss DB         = ``<save_root>/loss_log.db``
     samples         = ``<save_root>/samples``
 
-``model_id`` + ``model_extra`` parametrise the model (chroma, lumina2,
-omnigen2, flex1, flex2). ``model_extra`` carries the architecture SELECTOR and
-quantize mode verbatim from each model's ai-toolkit example config — these
-differ per model (``arch: chroma`` vs ``is_lumina2: true`` vs ``is_flux: true``;
-``quantize`` vs ``quantize_te``). ``bypass_guidance_embedding`` is set for the
-Flex models, which require it during training.
+``model_id`` + the four ``*_extra`` mappings parametrise the architecture; they
+come from :mod:`bracket.trainer.aitk_profiles`, which transcribes ai-toolkit's
+own per-arch default table. ``model_extra`` carries the architecture SELECTOR
+and quantize mode verbatim — these differ per model (``arch: chroma`` vs
+``is_lumina2: true`` vs ``is_flux: true``; ``quantize`` vs ``quantize_te``).
+``bypass_guidance_embedding`` is set for the Flex models, which require it
+during training.
+
+``media_kind`` selects what the emitted job trains on:
+
+``image`` (default)
+    Today's behaviour — multi-resolution buckets, one frame per sample.
+
+``video``
+    The profile's ``dataset_extra`` supplies ``num_frames`` (> 1 is what
+    switches ai-toolkit's dataloader from stills to clips), ``fps``, and the
+    audio/i2v flags; ``sample_extra`` supplies the sample clip length. Samples
+    land as animated files, which the scorer frame-extracts before judging.
+
+``audio``
+    ACE-Step (music). Samples are audio files the VLM judge cannot read, so
+    these runs score on the loss curve alone — the scorer degrades to
+    loss-only and tags ``sample_dir_empty``.
 """
 
 from __future__ import annotations
@@ -45,6 +62,7 @@ from bracket.judge.base import parse_judge_prompts_file
 from bracket.search.space import (
     CategoricalKnob, FixedKnob, FloatKnob, SearchSpace,
 )
+from bracket.trainer.aitk_profiles import MEDIA_AUDIO, MEDIA_IMAGE, MEDIA_KINDS
 from bracket.trainer.base import (
     LaunchSpec, Trainer, TrainerConfig,
     make_subprocess_env, resolve_save_every_n_steps,
@@ -103,6 +121,11 @@ class AiToolkitLoRATrainer(Trainer):
         model_name_or_path: str,
         model_id: str,
         model_extra: Mapping[str, Any],
+        media_kind: str = MEDIA_IMAGE,
+        train_extra: Optional[Mapping[str, Any]] = None,
+        dataset_extra: Optional[Mapping[str, Any]] = None,
+        network_extra: Optional[Mapping[str, Any]] = None,
+        sample_extra: Optional[Mapping[str, Any]] = None,
         vram_gb: Optional[float] = None,
     ) -> None:
         self.aitk_dir = Path(aitk_dir).resolve()
@@ -118,6 +141,17 @@ class AiToolkitLoRATrainer(Trainer):
         # ``is_flux: true``. quantize vs quantize_te also varies. Merged into
         # the ``model:`` block as-is.
         self.model_extra = dict(model_extra)
+        if media_kind not in MEDIA_KINDS:
+            raise ValueError(
+                f"media_kind must be one of {MEDIA_KINDS}, got {media_kind!r}"
+            )
+        self.media_kind = media_kind
+        # Per-arch deltas for the remaining blocks. Copied defensively so a
+        # profile's dicts are never mutated by config assembly.
+        self.train_extra = dict(train_extra or {})
+        self.dataset_extra = dict(dataset_extra or {})
+        self.network_extra = dict(network_extra or {})
+        self.sample_extra = dict(sample_extra or {})
         self.run_script = self.aitk_dir / "run.py"
         if not self.run_script.exists():
             raise FileNotFoundError(f"run.py not found under {self.aitk_dir}")
@@ -274,6 +308,21 @@ class AiToolkitLoRATrainer(Trainer):
         if self.model_id in _BYPASS_GUIDANCE_IDS:
             # Flex architectures require bypassing the guidance embedder.
             train_block["bypass_guidance_embedding"] = True
+        # Per-arch train deltas last so a profile can override a shared default
+        # (e.g. MiniMax-H3's timestep_type / contrastive-guidance loss).
+        train_block.update(self.train_extra)
+
+        dataset_block: dict[str, Any] = {
+            "folder_path": folder_path,
+            "caption_ext": caption_ext,
+            "cache_latents_to_disk": True,
+        }
+        if self.media_kind != MEDIA_AUDIO:
+            # Pixel-bucket list; meaningless for an audio dataset.
+            dataset_block["resolution"] = list(_RESOLUTION)
+        # Video profiles set num_frames / fps / do_audio here. num_frames > 1
+        # is what makes ai-toolkit's dataloader read clips instead of stills.
+        dataset_block.update(self.dataset_extra)
 
         process: dict[str, Any] = {
             "type": "sd_trainer",
@@ -283,6 +332,7 @@ class AiToolkitLoRATrainer(Trainer):
                 "type": "lora",
                 "linear": int(config.network_rank),
                 "linear_alpha": int(config.network_alpha),
+                **self.network_extra,
             },
             "save": {
                 "dtype": "float16",
@@ -290,14 +340,7 @@ class AiToolkitLoRATrainer(Trainer):
                 "max_step_saves_to_keep": 4,
                 "push_to_hub": False,
             },
-            "datasets": [
-                {
-                    "folder_path": folder_path,
-                    "caption_ext": caption_ext,
-                    "cache_latents_to_disk": True,
-                    "resolution": list(_RESOLUTION),
-                },
-            ],
+            "datasets": [dataset_block],
             "train": train_block,
             "model": {
                 "name_or_path": self.model_name_or_path,
@@ -317,6 +360,9 @@ class AiToolkitLoRATrainer(Trainer):
                 "walk_seed": True,
                 "guidance_scale": _GUIDANCE_SCALE,
                 "sample_steps": _SAMPLE_STEPS,
+                # Video profiles override width/height/num_frames/fps and (for
+                # the distilled MiniMax checkpoints) guidance_scale.
+                **self.sample_extra,
             },
             # CRITICAL — enables the SQLite loss_log.db the scorer reads.
             "logging": {"use_ui_logger": True},

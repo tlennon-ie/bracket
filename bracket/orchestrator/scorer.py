@@ -31,7 +31,7 @@ from bracket.log_loss_reader import parse_log_loss
 from bracket.sqlite_loss_reader import parse_sqlite_loss
 from bracket.tfevents_reader import TFEventsTail
 from bracket.video import (
-    VIDEO_EXTENSIONS, extract_all_videos, is_video_file, list_video_samples,
+    extract_all_videos, is_frame_extractable, list_video_samples,
 )
 
 
@@ -468,6 +468,11 @@ def _pair_samples_with_prompts(
     for img in candidates:
         m = _SAMPLE_STEM_RE.match(img.name)
         if not m:
+            continue
+        # An animated WebP/GIF matches the still-image regex but has already
+        # been frame-extracted into `_frames/`. Judging the container too would
+        # score its first frame a second time and skew the run's mean.
+        if is_frame_extractable(img):
             continue
         sidecar = img.with_suffix(".txt")
         if sidecar.exists():

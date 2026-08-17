@@ -5,6 +5,16 @@ samples instead of `.png`. Bracket's existing scorer + judge expect images, so
 we extract a small handful of representative frames per video and let the
 existing image-judge score them.
 
+**ai-toolkit is the exception**: for any sample with `num_frames > 1` it forces
+the output extension to `webp` and writes an *animated* WebP, not an `.mp4`
+(`toolkit/config_modules.py`). `.webp` is also a perfectly ordinary still-image
+extension, so extension alone cannot tell the two apart — an animated WebP that
+slips through as a still gets judged on one frame, silently scoring an LTX-2.5
+or MiniMax-H3 run as if it were a stills model. :func:`is_animated_image`
+therefore opens the file and asks. Extraction for those goes through Pillow
+rather than ffmpeg: ffprobe's duration for animated WebP is unreliable, and
+Pillow addresses frames by index, which is what we want anyway.
+
 Three frames per clip is the established default for video LoRA evaluation
 in community rigs (one near the start, one in the middle, one near the end).
 That's enough to catch the visible failure modes (blurry first frame, bad
@@ -30,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS: tuple[str, ...] = (".mp4", ".webm", ".mov", ".mkv")
 
+# Container formats that may hold either a single frame or an animation. Only
+# an actual read distinguishes them — see is_animated_image.
+ANIMATED_IMAGE_EXTENSIONS: tuple[str, ...] = (".webp", ".gif")
+
 
 @dataclass(frozen=True)
 class FrameExtractionResult:
@@ -40,6 +54,38 @@ class FrameExtractionResult:
 
 def is_video_file(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_animated_image(path: Path) -> bool:
+    """True when `path` is a multi-frame WebP or GIF.
+
+    Pillow is an optional dependency. When it is missing we return False, which
+    restores the pre-existing behaviour of treating the file as a still — a
+    degradation, not a crash.
+    """
+    if path.suffix.lower() not in ANIMATED_IMAGE_EXTENSIONS:
+        return False
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning(
+            "Pillow not installed — cannot tell an animated %s from a still "
+            "one, so %s will be judged as a single image. `pip install "
+            "Pillow` to score every frame.",
+            path.suffix, path.name,
+        )
+        return False
+    try:
+        with Image.open(path) as img:
+            return getattr(img, "n_frames", 1) > 1
+    except (OSError, ValueError):
+        # Unreadable or truncated — let the still-image path deal with it.
+        return False
+
+
+def is_frame_extractable(path: Path) -> bool:
+    """True when frames should be pulled out of `path` before judging."""
+    return is_video_file(path) or is_animated_image(path)
 
 
 def extract_frames(
@@ -57,6 +103,11 @@ def extract_frames(
     out_dir.mkdir(parents=True, exist_ok=True)
     if not video.exists():
         return FrameExtractionResult(video=video, frames=(), error="video_missing")
+
+    if is_animated_image(video):
+        return _extract_animated_image_frames(
+            video, out_dir=out_dir, n_frames=n_frames,
+        )
 
     duration = _probe_duration(video)
     if duration is None or duration <= 0:
@@ -80,6 +131,51 @@ def extract_frames(
     if not frames:
         return FrameExtractionResult(video=video, frames=(), error="extraction_failed")
     return FrameExtractionResult(video=video, frames=tuple(frames))
+
+
+def _extract_animated_image_frames(
+    image: Path, *, out_dir: Path, n_frames: int,
+) -> FrameExtractionResult:
+    """Extract `n_frames` PNGs from an animated WebP/GIF via Pillow.
+
+    Frames are addressed by index (not timestamp), sampled at the same
+    even spacing the ffmpeg path uses, so extracted stems stay identical
+    between the two backends and prompt pairing is unaffected.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return FrameExtractionResult(video=image, frames=(), error="pillow_missing")
+
+    frames: list[Path] = []
+    try:
+        with Image.open(image) as img:
+            total = getattr(img, "n_frames", 1)
+            if total < 1:
+                return FrameExtractionResult(
+                    video=image, frames=(), error="no_frames",
+                )
+            count = max(1, min(int(n_frames), total))
+            indices = [
+                min(total - 1, int((i + 0.5) / count * total))
+                for i in range(count)
+            ]
+            for idx, frame_no in enumerate(indices):
+                out = out_dir / f"{image.stem}_frame{idx:02d}.png"
+                img.seek(frame_no)
+                # Animated WebP/GIF frames are palettised or RGBA; the judge
+                # wants plain RGB.
+                img.convert("RGB").save(out, format="PNG")
+                frames.append(out)
+    except (OSError, ValueError, EOFError) as e:
+        logger.warning("animated-image frame extraction failed for %s: %s", image.name, e)
+        return FrameExtractionResult(
+            video=image, frames=tuple(frames), error="extraction_failed",
+        )
+
+    if not frames:
+        return FrameExtractionResult(video=image, frames=(), error="extraction_failed")
+    return FrameExtractionResult(video=image, frames=tuple(frames))
 
 
 def _probe_duration(video: Path) -> Optional[float]:
@@ -122,10 +218,16 @@ def _ffmpeg_extract(video: Path, out: Path, t: float) -> bool:
 
 
 def list_video_samples(sample_dir: Path) -> list[Path]:
-    """Return all video files inside `sample_dir`, sorted."""
+    """Return every frame-extractable sample in `sample_dir`, sorted.
+
+    Covers both real video containers and the animated WebP/GIF ai-toolkit
+    writes for its video models.
+    """
     if not sample_dir.exists():
         return []
-    return sorted(p for p in sample_dir.iterdir() if p.is_file() and is_video_file(p))
+    return sorted(
+        p for p in sample_dir.iterdir() if p.is_file() and is_frame_extractable(p)
+    )
 
 
 def extract_all_videos(
