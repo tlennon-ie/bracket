@@ -7,9 +7,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bracket.video import (
+    ANIMATED_IMAGE_EXTENSIONS,
     VIDEO_EXTENSIONS,
     extract_frames,
+    is_animated_image,
+    is_frame_extractable,
     is_video_file,
     list_video_samples,
 )
@@ -55,14 +60,6 @@ def test_extract_frames_missing_video_returns_error(tmp_path):
 # trainer emits .mp4. `.webp` is also a normal still extension, so a purely
 # extension-based check judges the whole clip on one frame and silently scores
 # a video model as if it were a stills model.
-
-import pytest
-
-from bracket.video import (
-    ANIMATED_IMAGE_EXTENSIONS,
-    is_animated_image,
-    is_frame_extractable,
-)
 
 
 def _write_webp(path: Path, *, frames: int, size=(16, 16)) -> Path:

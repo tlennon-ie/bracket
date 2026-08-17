@@ -31,8 +31,7 @@ from bracket.log_loss_reader import parse_log_loss
 from bracket.sqlite_loss_reader import parse_sqlite_loss
 from bracket.tfevents_reader import TFEventsTail
 from bracket.video import (
-    VIDEO_EXTENSIONS, extract_all_videos, is_frame_extractable, is_video_file,
-    list_video_samples,
+    extract_all_videos, is_frame_extractable, list_video_samples,
 )
 
 

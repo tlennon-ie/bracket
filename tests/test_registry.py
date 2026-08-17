@@ -444,7 +444,7 @@ def test_aitk_media_presets_construct_trainers(tmp_path):
         assert trainer.name == f"aitk-lora-{profile_id}"
 
 
-def test_aitk_media_preset_defaults_come_from_profiles(tmp_path):
+def test_aitk_media_preset_defaults_come_from_profiles():
     """The model field's default is the profile's, not a second hardcoding."""
     from bracket.trainer.aitk_profiles import get_profile
 

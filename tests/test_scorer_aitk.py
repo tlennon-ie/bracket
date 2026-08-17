@@ -18,6 +18,8 @@ import sqlite3
 from pathlib import Path
 from typing import Optional, Sequence
 
+import pytest
+
 from bracket.orchestrator.scorer import (
     Scorer,
     _extract_prompt_idx,
@@ -227,8 +229,6 @@ def test_extract_prompt_idx_ltx2_unchanged():
 # is_frame_extractable() guard the judge would score the container's first
 # frame *in addition to* the frames extracted from it — double-counting one
 # frame and diluting the run's mean with a duplicate.
-
-import pytest
 
 
 def _write_animated_webp(path: Path, *, frames: int = 4) -> Path:

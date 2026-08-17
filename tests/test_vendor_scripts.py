@@ -75,9 +75,13 @@ def test_referenced_musubi_modules_exist():
     )
 
 
-def _trainer_kwargs(preset) -> dict[str, str] | None:
-    """Build ctor kwargs for a preset, or None if its vendor dir is absent."""
-    kwargs: dict[str, str] = {"vram_gb": 24.0}
+def _trainer_kwargs(preset) -> dict[str, object] | None:
+    """Build ctor kwargs for a preset, or None if its vendor dir is absent.
+
+    Values are heterogeneous — every field is a path string except ``vram_gb``,
+    which the adapters expect as a float.
+    """
+    kwargs: dict[str, object] = {"vram_gb": 24.0}
     for f in preset.fields:
         if f.target != "trainer":
             continue
