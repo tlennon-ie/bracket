@@ -217,3 +217,61 @@ def test_extract_prompt_idx_ltx2_unchanged():
     assert _extract_prompt_idx("step_000100_3") == 2
     assert _extract_prompt_idx("step_000020_1") == 0
     assert _extract_prompt_idx("step_000100_3_frame00") == 2
+
+
+# --- (iv) animated-WebP video samples (LTX-2.5 / MiniMax-H3) ---------------
+#
+# ai-toolkit forces `output_ext = webp` whenever num_frames > 1, so its video
+# models write an ANIMATED WebP where every other video trainer writes .mp4.
+# `.webp` also matches the still-image sample regex, so without the
+# is_frame_extractable() guard the judge would score the container's first
+# frame *in addition to* the frames extracted from it — double-counting one
+# frame and diluting the run's mean with a duplicate.
+
+import pytest
+
+
+def _write_animated_webp(path: Path, *, frames: int = 4) -> Path:
+    Image = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    imgs = [Image.new("RGB", (16, 16), (i * 30 % 256, 50, 90)) for i in range(frames)]
+    imgs[0].save(
+        path, format="WEBP", save_all=True, append_images=imgs[1:], duration=100,
+    )
+    return path
+
+
+def test_pair_samples_skips_animated_webp_container(tmp_path: Path):
+    sd = tmp_path / "samples"; sd.mkdir()
+    clip = _write_animated_webp(sd / "1724085406830__000000500_0.webp")
+    pairing = _pair_samples_with_prompts(sd, ["A", "B"])
+    assert clip not in pairing, (
+        "the animated container was judged as a still — its first frame would "
+        "be scored twice once _frames/ is populated"
+    )
+
+
+def test_pair_samples_keeps_still_webp(tmp_path: Path):
+    """A single-frame WebP is an ordinary image sample and must still pair."""
+    sd = tmp_path / "samples"; sd.mkdir()
+    Image = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    still = sd / "1724085406830__000000500_0.webp"
+    Image.new("RGB", (16, 16), (10, 20, 30)).save(still, format="WEBP")
+    pairing = _pair_samples_with_prompts(sd, ["A", "B"])
+    assert pairing[still] == "A"
+
+
+def test_pair_samples_uses_frames_extracted_from_animated_webp(tmp_path: Path):
+    """Extracted frames inherit the container's 0-based ai-toolkit index."""
+    sd = tmp_path / "samples"; sd.mkdir()
+    _write_animated_webp(sd / "1724085406831__000000500_1.webp")
+    frames_dir = sd / "_frames"; frames_dir.mkdir()
+    for i in range(3):
+        _sample_at(frames_dir, f"1724085406831__000000500_1_frame{i:02d}.png")
+
+    pairing = _pair_samples_with_prompts(sd, ["A", "B"])
+    paired = {p.name: prompt for p in pairing for prompt in [pairing[p]]}
+    assert paired == {
+        "1724085406831__000000500_1_frame00.png": "B",
+        "1724085406831__000000500_1_frame01.png": "B",
+        "1724085406831__000000500_1_frame02.png": "B",
+    }

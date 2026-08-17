@@ -479,23 +479,35 @@ def _build_krea2_lora(**kw: Any) -> Trainer:
     )
 
 
-def _build_aitk_lora(
-    *, model_id: str, model_extra: dict[str, Any], **kw: Any,
-) -> Trainer:
-    """Construct an ai-toolkit LoRA trainer.
+def _build_aitk_lora(*, profile_id: str, **kw: Any) -> Trainer:
+    """Construct an ai-toolkit LoRA trainer from a named architecture profile.
 
-    ``model_extra`` is the model's architecture selector + quantize mode taken
-    verbatim from its ai-toolkit example config (chroma/omnigen2/flex2 use
-    ``arch``; lumina2 uses ``is_lumina2``; flex1 uses ``is_flux``; quantize vs
-    quantize_te differs too).
+    The profile (see :mod:`bracket.trainer.aitk_profiles`) carries the model's
+    architecture selector, quantize mode, media kind, and the per-arch deltas
+    for the train / dataset / network / sample blocks — transcribed from
+    ai-toolkit's own per-arch default table rather than duplicated here.
     """
     from bracket.trainer.aitk_lora import AiToolkitLoRATrainer
+    from bracket.trainer.aitk_profiles import get_profile
+
+    profile = get_profile(profile_id)
     return AiToolkitLoRATrainer(
         aitk_dir=kw["aitk_dir"], venv_python=kw["venv_python"],
         model_name_or_path=kw["model_name_or_path"],
-        model_id=model_id, model_extra=model_extra,
+        model_id=profile.model_id, model_extra=profile.model_extra,
+        media_kind=profile.media_kind,
+        train_extra=profile.train_extra,
+        dataset_extra=profile.dataset_extra,
+        network_extra=profile.network_extra,
+        sample_extra=profile.sample_extra,
         vram_gb=kw.get("vram_gb"),
     )
+
+
+def _aitk_default_model(profile_id: str) -> str:
+    """Default ``name_or_path`` for an ai-toolkit preset's model field."""
+    from bracket.trainer.aitk_profiles import get_profile
+    return get_profile(profile_id).default_model
 
 
 _SDXL_PRETRAINED_FIELD = FieldSpec(
@@ -1373,13 +1385,11 @@ PRESETS: tuple[ModelPreset, ...] = (
         model_family="Chroma",
         training_type="LoRA",
         display_name="Chroma · LoRA (ai-toolkit)",
-        trainer_factory=lambda **kw: _build_aitk_lora(
-            model_id="chroma", model_extra={"arch": "chroma", "quantize": True}, **kw,
-        ),
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="chroma", **kw),
         fields=(
             FieldSpec(
                 name="model_name_or_path", label="Chroma model (HF id or path) *",
-                default="lodestones/Chroma", required=True, kind="string",
+                default=_aitk_default_model("chroma"), required=True, kind="string",
                 help="HF repo id or local path to the Chroma weights.",
             ),
             _AITK_DIR_FIELD,
@@ -1398,14 +1408,11 @@ PRESETS: tuple[ModelPreset, ...] = (
         model_family="Lumina2",
         training_type="LoRA",
         display_name="Lumina-Image-2.0 · LoRA (ai-toolkit)",
-        trainer_factory=lambda **kw: _build_aitk_lora(
-            model_id="lumina2",
-            model_extra={"is_lumina2": True, "quantize_te": True}, **kw,
-        ),
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="lumina2", **kw),
         fields=(
             FieldSpec(
                 name="model_name_or_path", label="Lumina2 model (HF id or path) *",
-                default="Alpha-VLLM/Lumina-Image-2.0", required=True, kind="string",
+                default=_aitk_default_model("lumina2"), required=True, kind="string",
                 help="HF repo id or local path to the Lumina-Image-2.0 weights.",
             ),
             _AITK_DIR_FIELD,
@@ -1423,14 +1430,11 @@ PRESETS: tuple[ModelPreset, ...] = (
         model_family="OmniGen2",
         training_type="LoRA",
         display_name="OmniGen2 · LoRA (ai-toolkit)",
-        trainer_factory=lambda **kw: _build_aitk_lora(
-            model_id="omnigen2",
-            model_extra={"arch": "omnigen2", "quantize_te": True}, **kw,
-        ),
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="omnigen2", **kw),
         fields=(
             FieldSpec(
                 name="model_name_or_path", label="OmniGen2 model (HF id or path) *",
-                default="OmniGen2/OmniGen2", required=True, kind="string",
+                default=_aitk_default_model("omnigen2"), required=True, kind="string",
                 help="HF repo id or local path to the OmniGen2 weights.",
             ),
             _AITK_DIR_FIELD,
@@ -1448,13 +1452,11 @@ PRESETS: tuple[ModelPreset, ...] = (
         model_family="Flex.1",
         training_type="LoRA",
         display_name="Flex.1 · LoRA (ai-toolkit)",
-        trainer_factory=lambda **kw: _build_aitk_lora(
-            model_id="flex1", model_extra={"is_flux": True, "quantize": True}, **kw,
-        ),
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="flex1", **kw),
         fields=(
             FieldSpec(
                 name="model_name_or_path", label="Flex.1 model (HF id or path) *",
-                default="ostris/Flex.1-alpha", required=True, kind="string",
+                default=_aitk_default_model("flex1"), required=True, kind="string",
                 help="HF repo id or local path to the Flex.1-alpha weights.",
             ),
             _AITK_DIR_FIELD,
@@ -1473,14 +1475,11 @@ PRESETS: tuple[ModelPreset, ...] = (
         model_family="Flex.2",
         training_type="LoRA",
         display_name="Flex.2 · LoRA (ai-toolkit)",
-        trainer_factory=lambda **kw: _build_aitk_lora(
-            model_id="flex2",
-            model_extra={"arch": "flex2", "quantize": True, "quantize_te": True}, **kw,
-        ),
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="flex2", **kw),
         fields=(
             FieldSpec(
                 name="model_name_or_path", label="Flex.2 model (HF id or path) *",
-                default="ostris/Flex.2-preview", required=True, kind="string",
+                default=_aitk_default_model("flex2"), required=True, kind="string",
                 help="HF repo id or local path to the Flex.2-preview weights.",
             ),
             _AITK_DIR_FIELD,
@@ -1492,6 +1491,171 @@ PRESETS: tuple[ModelPreset, ...] = (
             "Flex requires `bypass_guidance_embedding` during training (set "
             "automatically). Latents cache inline; loss from the SQLite "
             "`loss_log.db`."
+        ),
+        needs_pre_cache=False,
+    ),
+    # ─────────────── ai-toolkit · video (LTX-2.5, MiniMax-H3) ───────────────
+    ModelPreset(
+        id="aitk-ltx25-lora",
+        model_family="LTX-2.5",
+        training_type="LoRA",
+        display_name="LTX-2.5 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(profile_id="ltx25", **kw),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="LTX-2.5 model (HF id or path) *",
+                default=_aitk_default_model("ltx25"), required=True, kind="string",
+                help=(
+                    "HF repo id or local path to the LTX-2.5 weights. The repo "
+                    "is gated — accept the licence at "
+                    "huggingface.co/Lightricks/LTX-2.5 and log in with "
+                    "`huggingface-cli login` before the first run."
+                ),
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`arch: ltx2.5` — the LTX-2.5 path, distinct from the **LTX-2** "
+            "presets above which drive Lightricks' own `ltx-trainer` (that "
+            "trainer has no 2.5 support yet). Joint audio-video: clips train "
+            "at 49 frames / 24 fps with `do_audio`, samples render 121 frames. "
+            "Pre-quantised int8-ConvRot weights (DiT **and** TE) with "
+            "`low_vram` on. Latents cache inline; loss from the SQLite "
+            "`loss_log.db`. ai-toolkit writes video samples as **animated "
+            "WebP** (not .mp4), so frame extraction goes through Pillow — "
+            "install it (`pip install Pillow`) or each clip is judged on a "
+            "single frame."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-minimax-h3-lora",
+        model_family="MiniMax-H3",
+        training_type="LoRA",
+        display_name="MiniMax-H3 · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            profile_id="minimax_h3", **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="MiniMax-H3 model (HF id or path) *",
+                default=_aitk_default_model("minimax_h3"), required=True,
+                kind="string",
+                help=(
+                    "Comfy-Org's pre-quantised MiniMax-H3 repo (int8-ConvRot "
+                    "DiT + nvfp4 Qwen3-VL TE). Missing component files are "
+                    "downloaded into ai-toolkit's models folder on first load."
+                ),
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** (`run.py`, `sd_trainer` job) with "
+            "`arch: minimax_h3` — text-to-video-audio and image-to-video. "
+            "MiniMax-H3 is **guidance-distilled**, so training it naively "
+            "destroys the distillation: this preset applies ai-toolkit's "
+            "default remedy — contrastive-guidance loss (`do_guidance_loss`, "
+            "target 3.5) *and* ostris' published training adapter "
+            "(`assistant_lora_path`), which is downloaded on first run. "
+            "`adaln_proj` is excluded from the LoRA. Clips train at 39 frames "
+            "/ 24 fps on the VAE's 17n+5 grid with `auto_frame_count`; samples "
+            "render 107 frames at guidance 1. Loss from the SQLite "
+            "`loss_log.db`. Samples are animated WebP — Pillow is needed to "
+            "judge more than their first frame."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-minimax-h3-ref2va-lora",
+        model_family="MiniMax-H3 Ref2VA",
+        training_type="LoRA",
+        display_name="MiniMax-H3 Ref2VA · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            profile_id="minimax_h3_ref2va", **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="MiniMax-H3 model (HF id or path) *",
+                default=_aitk_default_model("minimax_h3_ref2va"), required=True,
+                kind="string",
+                help=(
+                    "Same Comfy-Org repo as the plain H3 preset — the ref2va "
+                    "partition is selected by the arch, not by a different "
+                    "repo."
+                ),
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** with `arch: minimax_h3_ref2va` — "
+            "**reference-to-video-audio**: conditions on reference images or "
+            "videos rather than a single first frame, so the dataset needs "
+            "control/reference paths alongside the target clips. Same "
+            "distillation handling as the plain H3 preset, with the ref2va "
+            "training adapter. Loss from the SQLite `loss_log.db`."
+        ),
+        needs_pre_cache=False,
+    ),
+    # ─────────────── ai-toolkit · audio (ACE-Step music) ───────────────
+    ModelPreset(
+        id="aitk-ace-step-15-lora",
+        model_family="ACE-Step 1.5",
+        training_type="LoRA",
+        display_name="ACE-Step 1.5 (music) · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            profile_id="ace_step_15", **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path", label="ACE-Step 1.5 model (HF id or path) *",
+                default=_aitk_default_model("ace_step_15"), required=True,
+                kind="string",
+                help="All-in-one ACE-Step 1.5 base checkpoint (repo-relative or local).",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Drives ostris' **ai-toolkit** with `arch: ace_step_15` — a "
+            "**music** LoRA. The dataset directory holds audio files with "
+            "sidecar caption `.txt`. **Scoring is loss-only**: Bracket's judge "
+            "is a vision model and cannot listen to the samples, so runs are "
+            "ranked purely on the training-loss curve (the report will tag "
+            "`loss_only`). That still answers the LR / rank / optimiser "
+            "question — just audition the winning LoRA yourself. Sample "
+            "prompts use ACE-Step's `<CAPTION>…</CAPTION>` tag form, one per "
+            "line; multi-line `<LYRICS>` blocks are not expressible in "
+            "Bracket's prompt file."
+        ),
+        needs_pre_cache=False,
+    ),
+    ModelPreset(
+        id="aitk-ace-step-15-xl-lora",
+        model_family="ACE-Step 1.5 XL",
+        training_type="LoRA",
+        display_name="ACE-Step 1.5 XL (music) · LoRA (ai-toolkit)",
+        trainer_factory=lambda **kw: _build_aitk_lora(
+            profile_id="ace_step_15_xl", **kw,
+        ),
+        fields=(
+            FieldSpec(
+                name="model_name_or_path",
+                label="ACE-Step 1.5 XL model (HF id or path) *",
+                default=_aitk_default_model("ace_step_15_xl"), required=True,
+                kind="string",
+                help="All-in-one ACE-Step 1.5 **XL** base checkpoint.",
+            ),
+            _AITK_DIR_FIELD,
+            _AITK_VENV_FIELD,
+        ),
+        notes=(
+            "Larger sibling of the ACE-Step 1.5 preset (`arch: "
+            "ace_step_15_xl`). Same loss-only scoring caveat — see that "
+            "preset's notes."
         ),
         needs_pre_cache=False,
     ),

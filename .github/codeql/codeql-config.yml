@@ -1,0 +1,13 @@
+name: "Bracket CodeQL config"
+
+# Bracket vendors four third-party trainers as git submodules under vendor/.
+# actions/checkout does not fetch submodules by default, so these are normally
+# empty in CI — but scanning them would be meaningless if that ever changes:
+# they are upstream code we pin, not code we can fix. Same for build output and
+# installed dependencies.
+paths-ignore:
+  - vendor
+  - frontend/dist
+  - frontend/node_modules
+  - "**/node_modules"
+  - runs

@@ -406,3 +406,68 @@ def test_aitk_default_model_name_or_path_per_preset():
         p = get_preset(fam, "LoRA")
         field = next(f for f in p.fields if f.name == "model_name_or_path")
         assert field.default == hf_id
+
+
+# ──────────── ai-toolkit · video + audio (LTX-2.5, MiniMax-H3, ACE-Step) ────────────
+
+
+_AITK_MEDIA_PRESETS = {
+    "aitk-ltx25-lora": ("LTX-2.5", "ltx25"),
+    "aitk-minimax-h3-lora": ("MiniMax-H3", "minimax_h3"),
+    "aitk-minimax-h3-ref2va-lora": ("MiniMax-H3 Ref2VA", "minimax_h3_ref2va"),
+    "aitk-ace-step-15-lora": ("ACE-Step 1.5", "ace_step_15"),
+    "aitk-ace-step-15-xl-lora": ("ACE-Step 1.5 XL", "ace_step_15_xl"),
+}
+
+
+def test_aitk_media_presets_registered():
+    ids = [p.id for p in PRESETS]
+    families = list_model_families()
+    for pid, (family, _profile_id) in _AITK_MEDIA_PRESETS.items():
+        assert pid in ids, f"missing ai-toolkit preset {pid}"
+        assert family in families, f"missing family {family}"
+        assert training_types_for(family) == ["LoRA"]
+
+
+def test_aitk_media_presets_construct_trainers(tmp_path):
+    """Each preset wires its profile through to the adapter."""
+    d, py = _stub_aitk(tmp_path)
+    for pid, (family, profile_id) in _AITK_MEDIA_PRESETS.items():
+        preset = get_preset(family, "LoRA")
+        assert preset.id == pid
+        # ai-toolkit caches latents inline — never a separate pre-cache stage.
+        assert preset.needs_pre_cache is False
+        trainer = preset.trainer_factory(
+            aitk_dir=str(d), venv_python=str(py),
+            model_name_or_path="some/model", vram_gb=32.0,
+        )
+        assert trainer.name == f"aitk-lora-{profile_id}"
+
+
+def test_aitk_media_preset_defaults_come_from_profiles(tmp_path):
+    """The model field's default is the profile's, not a second hardcoding."""
+    from bracket.trainer.aitk_profiles import get_profile
+
+    for _pid, (family, profile_id) in _AITK_MEDIA_PRESETS.items():
+        preset = get_preset(family, "LoRA")
+        field = next(f for f in preset.fields if f.name == "model_name_or_path")
+        assert field.default == get_profile(profile_id).default_model
+        assert field.required is True
+
+
+def test_every_aitk_preset_resolves_a_real_profile(tmp_path):
+    """No ai-toolkit preset may reference a profile id that does not exist.
+
+    ``_build_aitk_lora`` raises KeyError on an unknown id; constructing every
+    ai-toolkit preset here turns a typo into a test failure instead of a
+    runtime error the user only sees when they pick that model.
+    """
+    d, py = _stub_aitk(tmp_path)
+    aitk_presets = [p for p in PRESETS if p.id.startswith("aitk-")]
+    assert len(aitk_presets) == 10, [p.id for p in aitk_presets]
+    for preset in aitk_presets:
+        trainer = preset.trainer_factory(
+            aitk_dir=str(d), venv_python=str(py),
+            model_name_or_path="some/model", vram_gb=24.0,
+        )
+        assert trainer.name.startswith("aitk-lora-")
